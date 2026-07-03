@@ -14,8 +14,10 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test bin/cli.test.mjs",
-    "format": "prettier --write \"**/*.{js,mjs,md,json}\" --prose-wrap always --print-width 80"
+    "test": "node --test bin/cli.test.mjs && npm --workspace @gtm-agent/desktop run build && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml",
+    "format": "prettier --write \"**/*.{js,mjs,md,json}\" --prose-wrap always --print-width 80",
+    "desktop:dev": "npm --workspace @gtm-agent/desktop run tauri -- dev",
+    "desktop:build": "npm --workspace @gtm-agent/desktop run tauri -- build"
   },
   "keywords": [
     "codex",
@@ -43,5 +45,8 @@
   },
   "dependencies": {
     "prompts": "^2.4.2"
-  }
+  },
+  "workspaces": [
+    "apps/desktop"
+  ]
 }
