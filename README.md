@@ -80,8 +80,8 @@ predictable, reviewable, and close to how a careful human engineer would work.
 
 The installer copies two reusable Codex skills:
 
-- **github-pr-workflow** -- Branch, worktree, commit, push, and PR flow for
-  GitHub tasks. Keeps repo work isolated, reviewable, and easy to merge.
+- **pr-merge-cleanup** -- Branch, worktree, commit, push, and PR flow for GitHub
+  tasks. Keeps repo work isolated, reviewable, and easy to merge.
 - **post-implementation-review** -- Self-review loop: diff check, cleanup,
   re-verify before reporting done. Catches bugs, dead code, and style drift.
 
@@ -89,7 +89,7 @@ The installer copies two reusable Codex skills:
 
 - `AGENTS.md` -- the full autonomous workflow instruction set.
 - `templates/` -- all files the installer copies into your repo.
-- `skills/github-pr-workflow/SKILL.md` -- reusable GitHub branch, worktree,
+- `skills/pr-merge-cleanup/SKILL.md` -- reusable PR merge, branch deletion,
   commit, push, and PR workflow.
 - `skills/post-implementation-review/SKILL.md` -- reusable post-change review
   and cleanup loop.

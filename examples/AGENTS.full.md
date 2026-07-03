@@ -17,7 +17,7 @@ Use this when Codex is allowed to behave like a GitHub-first coding agent.
 
 Use these skill files as reusable guidance:
 
-- `skills/github-pr-workflow/SKILL.md`
+- `skills/pr-merge-cleanup/SKILL.md`
 - `skills/post-implementation-review/SKILL.md`
 
 ## Completion Report

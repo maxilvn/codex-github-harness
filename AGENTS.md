@@ -41,7 +41,7 @@ changes:
 If continuing an existing PR, use the existing branch and worktree when
 available.
 
-For detailed reusable guidance, see `skills/github-pr-workflow/SKILL.md`.
+For detailed reusable guidance, see `skills/pr-merge-cleanup/SKILL.md`.
 
 ## Verification
 
