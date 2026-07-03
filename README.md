@@ -38,13 +38,15 @@ The installer walks you through four questions and sets up everything:
 
 - **`codex/` (default)** -- Press Enter to accept. Codex creates branches like
   `codex/fix-auth-bug`.
-- **Custom** -- Enter your own prefix (e.g. `ai/`, `bot/`, your team name).
+- **Custom** -- Enter a prefix without trailing slash (e.g. `ai`, `bot`, your
+  team name). The `/` is added automatically.
 
 ### 4. Worktree Directory
 
-- **`../worktrees/<task>` (default)** -- Worktrees live outside the repo,
+- **`./worktrees/<task>` (default, inside repo)** -- Worktrees live inside the
+  repo directory, easy to find and clean up.
+- **`../worktrees/<task>` (outside repo)** -- Worktrees live outside the repo,
   keeping your main checkout clean.
-- **`./worktrees/<task>`** -- Worktrees live inside the repo directory.
 - **Custom** -- Enter any path relative to the repo root.
 
 ### Dry Run

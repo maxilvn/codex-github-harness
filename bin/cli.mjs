@@ -8,7 +8,7 @@ import {
   existsSync,
   cpSync,
 } from "node:fs";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve, dirname, basename, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import prompts from "prompts";
 
@@ -56,6 +56,12 @@ function copyDir(srcRel, destRel) {
     cpSync(src, dest, { recursive: true });
   }
   console.log("  " + (dryRun ? "[dry-run] " : "") + "copied: " + destRel + "/");
+}
+
+// Ensure prefix ends with /
+function normalizePrefix(p) {
+  if (!p) return "codex/";
+  return p.endsWith("/") ? p : p + "/";
 }
 
 async function askQuestions() {
@@ -114,10 +120,10 @@ async function askQuestions() {
     const { customPrefix } = await prompts({
       type: "text",
       name: "customPrefix",
-      message: "Enter your branch prefix:",
-      initial: "codex/",
+      message: "Enter prefix (without trailing /):",
+      initial: "",
     });
-    answers.branchPrefix = customPrefix || "codex/";
+    answers.branchPrefix = normalizePrefix(customPrefix);
   } else {
     answers.branchPrefix = "codex/";
   }
@@ -129,28 +135,30 @@ async function askQuestions() {
     message: "Where should worktrees be created?",
     choices: [
       {
-        title: "../worktrees/<task> (default, outside repo)",
-        value: "default",
+        title: "./worktrees/<task> (inside repo, recommended)",
+        value: "inside",
       },
-      { title: "./worktrees/<task> (inside repo)", value: "inside" },
+      {
+        title: "../worktrees/<task> (outside repo)",
+        value: "outside",
+      },
       { title: "Custom path", value: "custom" },
     ],
     initial: 0,
   });
   answers.worktreeChoice = worktreeChoice;
 
-  if (worktreeChoice === "inside") {
-    answers.worktreeDir = "./worktrees/";
-  } else if (worktreeChoice === "custom") {
-    const { customPath } = await prompts({
-      type: "text",
-      name: "customPath",
-      message: "Enter worktree path (relative to repo):",
-      initial: "../worktrees/",
-    });
-    answers.worktreeDir = customPath || "../worktrees/";
-  } else {
+  if (worktreeChoice === "outside") {
     answers.worktreeDir = "../worktrees/";
+  } else if (worktreeChoice === "custom") {
+    console.log("  (Tab to autocomplete directories, Enter to confirm)");
+    const customPath = await promptWithPathCompletion(
+      "Enter worktree path (relative to repo):",
+      target,
+    );
+    answers.worktreeDir = customPath || "./worktrees/";
+  } else {
+    answers.worktreeDir = "./worktrees/";
   }
 
   return answers;
