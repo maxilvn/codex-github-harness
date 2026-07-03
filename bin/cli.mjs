@@ -228,8 +228,8 @@ async function main() {
     if (!dryRun) {
       mkdirSync(skillsDest, { recursive: true });
       cpSync(
-        join(TEMPLATES, "skills", "github-pr-workflow"),
-        join(skillsDest, "github-pr-workflow"),
+        join(TEMPLATES, "skills", "pr-merge-cleanup"),
+        join(skillsDest, "pr-merge-cleanup"),
         { recursive: true },
       );
       cpSync(
@@ -266,7 +266,7 @@ async function main() {
   // Skills guide
   console.log("\nInstalled skills:");
   console.log(
-    "  github-pr-workflow          Branch, worktree, commit, push, and PR flow for GitHub tasks.",
+    "  pr-merge-cleanup             Merge a reviewed PR, delete branches, and remove worktrees.",
   );
   console.log(
     "  post-implementation-review  Self-review loop: diff check, cleanup, re-verify before reporting done.",

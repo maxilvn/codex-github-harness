@@ -21,9 +21,9 @@ describe("templates", () => {
     assert.ok(existsSync(join(TEMPLATES, "examples", "AGENTS.full.md")));
   });
 
-  it("has github-pr-workflow skill", () => {
+  it("has pr-merge-cleanup skill", () => {
     assert.ok(
-      existsSync(join(TEMPLATES, "skills", "github-pr-workflow", "SKILL.md")),
+      existsSync(join(TEMPLATES, "skills", "pr-merge-cleanup", "SKILL.md")),
     );
   });
 
