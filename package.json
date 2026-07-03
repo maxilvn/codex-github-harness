@@ -1,6 +1,6 @@
 {
   "name": "codex-github-harness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "An opinionated workflow harness that makes Codex behave like a disciplined GitHub coding agent.",
   "type": "module",
   "bin": {
