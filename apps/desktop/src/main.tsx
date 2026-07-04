@@ -221,13 +221,127 @@ function ProjectView({
             <article className="panel doc" key={doc.key}>
               <p className="label">{doc.fileName}</p>
               <h3>{doc.title}</h3>
-              <pre>{doc.content}</pre>
+              <RenderedDoc content={doc.content} />
             </article>
           ))}
         </section>
       </section>
     </section>
   );
+}
+
+function RenderedDoc({ content }: { content: string }) {
+  const blocks = markdownBlocks(content);
+
+  return (
+    <div className="doc-content">
+      {blocks.map((block, index) => {
+        if (block.type === "heading") {
+          return <h4 key={index}>{block.text}</h4>;
+        }
+        if (block.type === "list") {
+          return (
+            <ul key={index}>
+              {block.items.map((item, itemIndex) => (
+                <li key={itemIndex}>{item}</li>
+              ))}
+            </ul>
+          );
+        }
+        if (block.type === "ordered-list") {
+          return (
+            <ol key={index}>
+              {block.items.map((item, itemIndex) => (
+                <li key={itemIndex}>{item}</li>
+              ))}
+            </ol>
+          );
+        }
+        return <p key={index}>{block.text}</p>;
+      })}
+    </div>
+  );
+}
+
+type MarkdownBlock =
+  | { type: "heading"; text: string }
+  | { type: "paragraph"; text: string }
+  | { type: "list"; items: string[] }
+  | { type: "ordered-list"; items: string[] };
+
+function markdownBlocks(content: string): MarkdownBlock[] {
+  const blocks: MarkdownBlock[] = [];
+  const lines = content.split(/\r?\n/);
+  let paragraph: string[] = [];
+  let list: string[] = [];
+  let orderedList: string[] = [];
+
+  function flushParagraph() {
+    if (!paragraph.length) return;
+    blocks.push({ type: "paragraph", text: cleanInline(paragraph.join(" ")) });
+    paragraph = [];
+  }
+
+  function flushList() {
+    if (list.length) {
+      blocks.push({ type: "list", items: list.map(cleanInline) });
+      list = [];
+    }
+    if (orderedList.length) {
+      blocks.push({ type: "ordered-list", items: orderedList.map(cleanInline) });
+      orderedList = [];
+    }
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    const heading = line.match(/^#{1,6}\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      blocks.push({ type: "heading", text: cleanInline(heading[1]) });
+      continue;
+    }
+
+    const bullet = line.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      flushParagraph();
+      orderedList = [];
+      list.push(bullet[1]);
+      continue;
+    }
+
+    const numbered = line.match(/^\d+\.\s+(.+)$/);
+    if (numbered) {
+      flushParagraph();
+      list = [];
+      orderedList.push(numbered[1]);
+      continue;
+    }
+
+    flushList();
+    paragraph.push(line);
+  }
+
+  flushParagraph();
+  flushList();
+  return blocks.length ? blocks : [{ type: "paragraph", text: "No content yet." }];
+}
+
+function cleanInline(value: string) {
+  return value
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .trim();
 }
 
 function faviconForUrl(value: string) {
