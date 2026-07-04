@@ -27,7 +27,7 @@ export interface ContextDoc {
 
 export interface RunState {
   id: string;
-  kind: "initial_analysis";
+  kind: "initial_analysis" | "x_account_analysis";
   status: "running" | "completed" | "failed";
   providerId?: string | null;
   providerTitle?: string | null;
@@ -48,7 +48,10 @@ export interface RunActivity {
 export interface ChannelSetup {
   id: string;
   name: string;
-  status: "not_configured" | "ready";
+  status: "not_configured" | "needs_login" | "analyzing" | "ready" | "failed";
+  loginStatus: "unknown" | "needs_login" | "verified";
+  analysisStatus: "not_started" | "running" | "ready" | "failed";
+  accountLabel?: string | null;
   path: string;
   files: string[];
 }

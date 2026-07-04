@@ -51,10 +51,16 @@ export const api = {
   configureChannel(projectPath: string, channelId: string) {
     return call<ProjectState>("configure_channel", { projectPath, channelId });
   },
+  runXAccountAnalysis(projectPath: string) {
+    return call<RunState>("run_x_account_analysis", { projectPath });
+  },
   openProjectInCodex(projectPath: string) {
     return call<void>("open_project_in_codex", { projectPath });
   },
   openExternalUrl(url: string) {
     return call<void>("open_external_url", { url });
+  },
+  openChromeUrl(url: string) {
+    return call<void>("open_chrome_url", { url });
   },
 };

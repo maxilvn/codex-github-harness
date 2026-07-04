@@ -149,6 +149,9 @@ struct ChannelSetup {
     id: String,
     name: String,
     status: ChannelSetupStatus,
+    login_status: XLoginStatus,
+    analysis_status: XAnalysisStatus,
+    account_label: Option<String>,
     path: String,
     files: Vec<String>,
 }
@@ -157,7 +160,36 @@ struct ChannelSetup {
 #[serde(rename_all = "snake_case")]
 enum ChannelSetupStatus {
     NotConfigured,
+    NeedsLogin,
+    Analyzing,
     Ready,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum XLoginStatus {
+    Unknown,
+    NeedsLogin,
+    Verified,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum XAnalysisStatus {
+    NotStarted,
+    Running,
+    Ready,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct XChannelStatus {
+    login_status: XLoginStatus,
+    analysis_status: XAnalysisStatus,
+    account_label: Option<String>,
+    updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -201,8 +233,10 @@ pub fn run() {
             load_project,
             run_initial_analysis,
             configure_channel,
+            run_x_account_analysis,
             open_project_in_codex,
-            open_external_url
+            open_external_url,
+            open_chrome_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running GTM Agent");
@@ -311,6 +345,87 @@ fn configure_channel(project_path: String, channel_id: String) -> AppResult<Proj
 }
 
 #[tauri::command]
+fn run_x_account_analysis(app: tauri::AppHandle, project_path: String) -> AppResult<RunState> {
+    let path = PathBuf::from(project_path);
+    let config: ProjectConfig = read_json(&path.join(".gtm-agent/config.json"))?;
+    write_x_channel_setup(&path)?;
+    write_x_channel_status(&path, XLoginStatus::Unknown, XAnalysisStatus::Running, None)?;
+    let run_id = format!("x_run_{}", Utc::now().format("%Y%m%d%H%M%S"));
+    let run_path = run_manifest_path(&path, &run_id);
+    let log_path = path.join(".gtm-agent/runs").join(format!("{run_id}.jsonl"));
+    let run = RunState {
+        id: run_id.clone(),
+        kind: "x_account_analysis".into(),
+        status: RunStatus::Running,
+        codex_thread_id: None,
+        started_at: Utc::now().to_rfc3339(),
+        completed_at: None,
+        log_path: log_path.to_string_lossy().to_string(),
+        error: None,
+    };
+    write_json_pretty(&run_path, &run)?;
+    append_event(
+        &path,
+        "channel.analysis_started",
+        "X account analysis started",
+        serde_json::json!({ "runId": run.id, "channelId": "x" }),
+    )?;
+
+    let app_handle = app.clone();
+    let run_for_thread = run.clone();
+    thread::spawn(move || {
+        let result = execute_codex_turn(
+            &path,
+            &config,
+            &run_for_thread,
+            &x_account_analysis_prompt(&config),
+            "X account analysis",
+        );
+        let status_result = match &result {
+            Ok(()) => {
+                let reported = read_x_channel_status(&path);
+                if reported.login_status == XLoginStatus::NeedsLogin {
+                    write_x_channel_status(
+                        &path,
+                        XLoginStatus::NeedsLogin,
+                        XAnalysisStatus::NotStarted,
+                        reported.account_label,
+                    )
+                } else {
+                    write_x_channel_status(
+                        &path,
+                        XLoginStatus::Verified,
+                        XAnalysisStatus::Ready,
+                        read_x_account_label(&path),
+                    )
+                }
+            }
+            Err(_) => write_x_channel_status(
+                &path,
+                XLoginStatus::Unknown,
+                XAnalysisStatus::Failed,
+                read_x_account_label(&path),
+            ),
+        };
+        let _ = status_result;
+        let _ = app_handle.emit(
+            "project-updated",
+            serde_json::json!({ "projectPath": path.to_string_lossy(), "runId": run_id }),
+        );
+        if let Err(err) = result {
+            let _ = append_event(
+                &path,
+                "channel.analysis_failed",
+                &format!("X account analysis failed: {err}"),
+                serde_json::json!({ "runId": run_id, "channelId": "x" }),
+            );
+        }
+    });
+
+    Ok(run)
+}
+
+#[tauri::command]
 fn run_initial_analysis(app: tauri::AppHandle, project_path: String) -> AppResult<RunState> {
     let path = PathBuf::from(project_path);
     let config: ProjectConfig = read_json(&path.join(".gtm-agent/config.json"))?;
@@ -387,15 +502,42 @@ fn open_external_url(url: String) -> AppResult<()> {
     Ok(())
 }
 
+#[tauri::command]
+fn open_chrome_url(url: String) -> AppResult<()> {
+    let normalized = normalize_url(&url)?;
+    Command::new("open")
+        .arg("-a")
+        .arg("Google Chrome")
+        .arg(normalized)
+        .spawn()
+        .map_err(|err| AppError::Open(err.to_string()))?;
+    Ok(())
+}
+
 fn execute_initial_analysis(
     project: &Path,
     config: &ProjectConfig,
     initial: &RunState,
     provider: &AgentProvider,
 ) -> AppResult<()> {
+    execute_agent_turn(
+        project,
+        initial,
+        provider,
+        &initial_analysis_prompt(config),
+        "Initial analysis",
+    )
+}
+
+fn execute_agent_turn(
+    project: &Path,
+    initial: &RunState,
+    provider: &AgentProvider,
+    prompt: &str,
+    task_label: &str,
+) -> AppResult<()> {
     let binary = resolve_command(&provider.command)
         .ok_or_else(|| AppError::Agent(format!("{} command not found", provider.command)))?;
-    let prompt = initial_analysis_prompt(config);
     let log_path = PathBuf::from(&initial.log_path);
     let log_file = Arc::new(Mutex::new(
         OpenOptions::new()
@@ -495,7 +637,7 @@ fn execute_initial_analysis(
             )?;
             send_rpc(
                 &mut stdin,
-                &acp_session_prompt_request(&id, &prompt),
+                &acp_session_prompt_request(&id, prompt),
                 &log_file,
             )?;
             write_json_pretty(&run_manifest_path(project, &initial.id), &started)?;
@@ -532,7 +674,7 @@ fn execute_initial_analysis(
         append_event(
             project,
             "task.completed",
-            "Initial analysis completed",
+            &format!("{task_label} completed"),
             serde_json::json!({
                 "runId": initial.id,
                 "providerId": finished.provider_id,
@@ -892,30 +1034,34 @@ fn read_channel_setups(project_path: &Path) -> Vec<ChannelSetup> {
             id: "x".into(),
             name: "X".into(),
             status: ChannelSetupStatus::NotConfigured,
+            login_status: XLoginStatus::Unknown,
+            analysis_status: XAnalysisStatus::NotStarted,
+            account_label: None,
             path: x_path.to_string_lossy().to_string(),
             files: Vec::new(),
         }];
     }
 
-    let files = [
-        "profile.md",
-        "rules.md",
-        "examples.md",
-        "searches.md",
-        "opportunities.jsonl",
-        "runs.jsonl",
-        "drafts/README.md",
-        "drafts/schema.md",
-    ]
-    .iter()
-    .filter(|file_name| x_path.join(file_name).exists())
-    .map(|file_name| (*file_name).to_string())
-    .collect::<Vec<_>>();
+    let channel_status = read_x_channel_status(project_path);
+    let setup_status = match channel_status.analysis_status {
+        XAnalysisStatus::Running => ChannelSetupStatus::Analyzing,
+        XAnalysisStatus::Ready => ChannelSetupStatus::Ready,
+        XAnalysisStatus::Failed => ChannelSetupStatus::Failed,
+        XAnalysisStatus::NotStarted => ChannelSetupStatus::NeedsLogin,
+    };
+    let files = ["profile.md", "rules.md", "examples.md", "voice.md"]
+        .iter()
+        .filter(|file_name| x_path.join(file_name).exists())
+        .map(|file_name| (*file_name).to_string())
+        .collect::<Vec<_>>();
 
     vec![ChannelSetup {
         id: "x".into(),
         name: "X".into(),
-        status: ChannelSetupStatus::Ready,
+        status: setup_status,
+        login_status: channel_status.login_status,
+        analysis_status: channel_status.analysis_status,
+        account_label: channel_status.account_label,
         path: x_path.to_string_lossy().to_string(),
         files,
     }]
@@ -938,6 +1084,10 @@ fn write_x_channel_setup(project_path: &Path) -> AppResult<()> {
         "# X Examples\n\nUse this file as the channel-specific memory for what good looks like.\n\n## Strong examples\n\n_Add approved posts and replies here after the user marks them as good._\n\n## Avoid examples\n\n_Add drafts or posts that felt too salesy, off-tone, or low-signal._\n",
     )?;
     write_if_missing(
+        &channel_path.join("voice.md"),
+        "# X Account Voice\n\n_Pending account analysis._\n\nCodex should replace this with account-specific voice guidance after reviewing the signed-in X profile, recent posts, replies, and strong examples.\n",
+    )?;
+    write_if_missing(
         &channel_path.join("searches.md"),
         "# X Search Strategy\n\n## Inputs\n\nUse `marketing-strategy.md`, `brand-voice.md`, competitor names, ICP language, and pain-point terms from the brand analysis.\n\n## Opportunity types\n\n- Buyer pain posts\n- Founder/operator discussions\n- Competitor or alternative mentions\n- Category education threads\n- Launch or workflow discussions where a helpful reply fits\n\n## Daily run output\n\nFor every opportunity, capture the source URL, why it matters, suggested angle, draft reply, and review status before any browser-assisted posting.\n",
     )?;
@@ -951,7 +1101,60 @@ fn write_x_channel_setup(project_path: &Path) -> AppResult<()> {
         &channel_path.join("drafts/README.md"),
         "# X Draft Queue\n\nDrafts created by daily X runs should live here until they are approved, edited, skipped, or posted through Chrome.\n",
     )?;
+    if !channel_path.join("status.json").exists() {
+        write_x_channel_status(
+            project_path,
+            XLoginStatus::Unknown,
+            XAnalysisStatus::NotStarted,
+            None,
+        )?;
+    }
     Ok(())
+}
+
+fn read_x_channel_status(project_path: &Path) -> XChannelStatus {
+    let path = project_path.join(".gtm-agent/channels/x/status.json");
+    if path.exists() {
+        if let Ok(status) = read_json(&path) {
+            return status;
+        }
+    }
+    XChannelStatus {
+        login_status: XLoginStatus::Unknown,
+        analysis_status: XAnalysisStatus::NotStarted,
+        account_label: None,
+        updated_at: Utc::now().to_rfc3339(),
+    }
+}
+
+fn write_x_channel_status(
+    project_path: &Path,
+    login_status: XLoginStatus,
+    analysis_status: XAnalysisStatus,
+    account_label: Option<String>,
+) -> AppResult<()> {
+    write_json_pretty(
+        &project_path.join(".gtm-agent/channels/x/status.json"),
+        &XChannelStatus {
+            login_status,
+            analysis_status,
+            account_label,
+            updated_at: Utc::now().to_rfc3339(),
+        },
+    )
+}
+
+fn read_x_account_label(project_path: &Path) -> Option<String> {
+    let status = read_x_channel_status(project_path);
+    status.account_label.or_else(|| {
+        let profile = fs::read_to_string(project_path.join(".gtm-agent/channels/x/profile.md"))
+            .unwrap_or_default();
+        profile
+            .lines()
+            .find_map(|line| line.strip_prefix("- Account:").map(str::trim))
+            .filter(|value| !value.is_empty() && !value.contains("Pending"))
+            .map(str::to_string)
+    })
 }
 
 fn write_if_missing(path: &Path, content: &str) -> AppResult<()> {
@@ -1301,6 +1504,64 @@ Write progress messages for the app user in a clean product-research tone. Keep 
 Keep the files concise but specific enough that future GTM tasks can use them as source context. Include uncertainty where evidence is weak. Do not create outreach drafts, schedules, plugins, or extra strategy files. Do not post publicly or send messages. Rewrite only the four requested Markdown files and append progress/completion events to `.gtm-agent/events.jsonl` as JSON lines with eventType, summary, payload, and createdAt.
 "#,
         url = config.website_url
+    )
+}
+
+fn x_account_analysis_prompt(config: &ProjectConfig) -> String {
+    format!(
+        r#"Use [@chrome](plugin://chrome@openai-bundled) to analyze the currently signed-in X account for this GTM workspace.
+
+Website: {url}
+Brand: {name}
+
+Goal:
+Configure the X channel for draft-first outreach. Do not post, like, follow, send, or publicly interact. Only inspect the logged-in account and write local channel context files.
+
+First verify whether Chrome is signed into X:
+- Open X/Twitter in Chrome.
+- If no account is signed in, stop after writing `.gtm-agent/channels/x/status.json` with `loginStatus: "needs_login"`, `analysisStatus: "not_started"`, and no account label.
+- If an account is signed in, identify the visible handle/name from the profile or account switcher.
+
+Then rewrite only these files:
+- `.gtm-agent/channels/x/profile.md`
+- `.gtm-agent/channels/x/rules.md`
+- `.gtm-agent/channels/x/examples.md`
+- `.gtm-agent/channels/x/voice.md`
+- `.gtm-agent/channels/x/status.json`
+
+Use the global brand files as base context:
+- `product-information.md`
+- `marketing-strategy.md`
+- `competitor-analysis.md`
+- `brand-voice.md`
+
+File requirements:
+
+1. `profile.md`
+Capture the signed-in account name/handle, visible bio, positioning, recurring topics, audience clues, and what kind of X activity fits the account. Include a line formatted exactly as `- Account: @handle or display name` when known.
+
+2. `voice.md`
+Write account-specific voice guidance based on visible posts/replies: tone, pacing, sentence style, vocabulary, formatting habits, and how the global brand voice should adapt for X.
+
+3. `examples.md`
+Capture only useful patterns, not private data. Include strong post/reply examples as short paraphrased patterns unless quoting is necessary. Add sections for `Strong examples`, `Reusable patterns`, and `Avoid`.
+
+4. `rules.md`
+Keep the draft-first operating rules: Codex may find opportunities and draft replies; public posting requires explicit user approval. Include guardrails for spam, unsupported claims, and when not to reply.
+
+5. `status.json`
+Write valid JSON with this exact shape:
+{{
+  "loginStatus": "verified",
+  "analysisStatus": "ready",
+  "accountLabel": "@handle or display name",
+  "updatedAt": "ISO-8601 timestamp"
+}}
+
+Do not create outreach drafts in this run. Do not modify backend queue files such as `opportunities.jsonl`, `runs.jsonl`, or files in `drafts/` unless they do not exist and are needed as empty placeholders.
+"#,
+        url = config.website_url,
+        name = config.name
     )
 }
 
@@ -1755,9 +2016,11 @@ mod tests {
             "profile.md",
             "rules.md",
             "examples.md",
+            "voice.md",
             "searches.md",
             "opportunities.jsonl",
             "runs.jsonl",
+            "status.json",
             "drafts/README.md",
             "drafts/schema.md",
         ] {
@@ -1765,8 +2028,11 @@ mod tests {
         }
         let setups = read_channel_setups(&project_path);
         assert_eq!(setups.len(), 1);
-        assert_eq!(setups[0].status, ChannelSetupStatus::Ready);
-        assert!(setups[0].files.contains(&"drafts/schema.md".into()));
+        assert_eq!(setups[0].status, ChannelSetupStatus::NeedsLogin);
+        assert_eq!(setups[0].login_status, XLoginStatus::Unknown);
+        assert_eq!(setups[0].analysis_status, XAnalysisStatus::NotStarted);
+        assert!(setups[0].files.contains(&"voice.md".into()));
+        assert!(!setups[0].files.contains(&"drafts/schema.md".into()));
 
         fs::remove_dir_all(project_path).unwrap();
     }

@@ -7,6 +7,8 @@ import type {
   ChannelSetup,
   ContextDoc,
   ProjectState,
+  RunActivity,
+  RunState,
 } from "./lib/types";
 import "./styles.css";
 
@@ -198,7 +200,13 @@ function ProjectView({
   const [activeChannelId, setActiveChannelId] = React.useState<string | null>(
     null,
   );
+  const [openingChannelId, setOpeningChannelId] = React.useState<string | null>(
+    null,
+  );
   const [configuringChannelId, setConfiguringChannelId] = React.useState<
+    string | null
+  >(null);
+  const [analyzingChannelId, setAnalyzingChannelId] = React.useState<
     string | null
   >(null);
   const [channelError, setChannelError] = React.useState<string | null>(null);
@@ -237,12 +245,17 @@ function ProjectView({
   );
 
   async function configureChannel(channelId: string) {
-    setActiveChannelId(channelId);
     setChannelError(null);
     if (channelId !== "x") {
+      setActiveChannelId(null);
       setChannelError(`${channelName(channelId)} setup is coming next.`);
       return;
     }
+    setOpeningChannelId(channelId);
+    window.setTimeout(() => {
+      setActiveChannelId(channelId);
+      setOpeningChannelId(null);
+    }, 240);
     setConfiguringChannelId(channelId);
     try {
       const next = await api.configureChannel(project.config.path, channelId);
@@ -251,6 +264,19 @@ function ProjectView({
       setChannelError(String(err));
     } finally {
       setConfiguringChannelId(null);
+    }
+  }
+
+  async function analyzeXAccount() {
+    setChannelError(null);
+    setAnalyzingChannelId("x");
+    try {
+      await api.runXAccountAnalysis(project.config.path);
+      onProjectUpdate(await api.loadProject(project.config.path));
+    } catch (err) {
+      setChannelError(String(err));
+    } finally {
+      setAnalyzingChannelId(null);
     }
   }
 
@@ -389,7 +415,12 @@ function ProjectView({
         </section>
 
         <section
-          className="channel-setup"
+          className={[
+            "channel-setup",
+            openingChannelId ? "channel-setup-opening" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           aria-hidden={!showChannels || showDashboard}
           aria-label="Marketing channel setup"
         >
@@ -412,7 +443,18 @@ function ProjectView({
           {showChannelDetail ? null : (
             <div className="channel-list">
               {channels.map((channel) => (
-                <article className="channel-card" key={channel.id}>
+                <article
+                  className={[
+                    "channel-card",
+                    openingChannelId === channel.id ? "is-opening" : "",
+                    openingChannelId && openingChannelId !== channel.id
+                      ? "is-moving-away"
+                      : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  key={channel.id}
+                >
                   <UrlIcon websiteUrl={channel.faviconUrl} />
                   <div>
                     <div className="channel-card-head">
@@ -429,9 +471,13 @@ function ProjectView({
                     className="secondary"
                     type="button"
                     onClick={() => void configureChannel(channel.id)}
-                    disabled={configuringChannelId === channel.id}
+                    disabled={
+                      configuringChannelId === channel.id ||
+                      openingChannelId === channel.id
+                    }
                   >
-                    {configuringChannelId === channel.id
+                    {configuringChannelId === channel.id ||
+                    openingChannelId === channel.id
                       ? "Setting up..."
                       : channelSetups.get(channel.id)?.status === "ready"
                         ? "Open"
@@ -450,7 +496,14 @@ function ProjectView({
             <XChannelSetupPanel
               channel={activeChannel}
               setup={activeChannelSetup}
+              run={run?.kind === "x_account_analysis" ? run : null}
+              activity={
+                run?.kind === "x_account_analysis" ? project.runActivity : []
+              }
               isConfiguring={configuringChannelId === activeChannel.id}
+              isAnalyzing={analyzingChannelId === activeChannel.id}
+              onOpenLogin={() => void api.openChromeUrl("https://x.com/login")}
+              onAnalyze={() => void analyzeXAccount()}
             />
           ) : null}
 
@@ -543,13 +596,32 @@ function ProjectView({
 function XChannelSetupPanel({
   channel,
   setup,
+  run,
+  activity,
   isConfiguring,
+  isAnalyzing,
+  onOpenLogin,
+  onAnalyze,
 }: {
   channel: MarketingChannel;
   setup: ChannelSetup | null;
+  run: RunState | null;
+  activity: RunActivity[];
   isConfiguring: boolean;
+  isAnalyzing: boolean;
+  onOpenLogin: () => void;
+  onAnalyze: () => void;
 }) {
   const isReady = setup?.status === "ready";
+  const isRunActive =
+    isAnalyzing ||
+    run?.status === "running" ||
+    setup?.analysisStatus === "running";
+  const loginLabel =
+    setup?.accountLabel ??
+    (setup?.loginStatus === "verified"
+      ? "X account verified"
+      : "No X account verified yet");
   return (
     <article className="x-setup-panel" aria-label="X channel setup">
       <div className="x-setup-head">
@@ -563,16 +635,50 @@ function XChannelSetupPanel({
         </span>
       </div>
 
+      <div className="x-login-card">
+        <div>
+          <strong>Use existing Chrome login</strong>
+          <p>{loginLabel}</p>
+        </div>
+        <button className="secondary" type="button" onClick={onOpenLogin}>
+          Open X login
+        </button>
+      </div>
+
+      {isRunActive || activity.length > 0 ? (
+        <div className="x-codex-card">
+          <div className="x-codex-head">
+            <strong>Codex</strong>
+            <span>{isRunActive ? "Analyzing..." : "Latest output"}</span>
+          </div>
+          <div className="x-codex-output">
+            {activity.length ? (
+              activity
+                .slice(-3)
+                .map((item, index) => (
+                  <p key={`${item.title}-${index}`}>{item.message}</p>
+                ))
+            ) : (
+              <p>
+                Codex will inspect the signed-in X account in Chrome and write
+                profile, rules, examples, and voice.
+              </p>
+            )}
+          </div>
+        </div>
+      ) : null}
+
       <div className="x-setup-steps">
-        <SetupStep
-          title="Use existing Chrome login"
-          description="Codex will use the signed-in browser session instead of the paid X API."
-          status={isReady ? "Ready" : "Next"}
-        />
         <SetupStep
           title="Learn account voice"
           description="Profile, recent posts, replies, strong examples, and avoid patterns become channel memory."
-          status={isReady ? "Ready" : "Planned"}
+          status={
+            setup?.analysisStatus === "running"
+              ? "Running"
+              : isReady
+                ? "Ready"
+                : "Next"
+          }
         />
         <SetupStep
           title="Create daily draft queue"
@@ -586,9 +692,19 @@ function XChannelSetupPanel({
         />
       </div>
 
+      <div className="x-analysis-actions">
+        <button
+          type="button"
+          onClick={onAnalyze}
+          disabled={isRunActive || isConfiguring}
+        >
+          {isRunActive ? "Analyzing..." : "Analyze account with Codex"}
+        </button>
+      </div>
+
       {isReady ? (
         <div className="x-setup-files">
-          <p className="eyebrow">Created channel files</p>
+          <p className="eyebrow">Channel context files</p>
           <div>
             {setup.files.map((file) => (
               <code key={file}>{file}</code>

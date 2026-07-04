@@ -673,6 +673,25 @@ code {
   border-radius: 8px;
   padding: 14px;
   background: #ffffff;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity 180ms ease,
+    transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    border-color 180ms ease,
+    box-shadow 240ms ease;
+}
+
+.channel-card.is-opening {
+  z-index: 1;
+  border-color: #d4d4d4;
+  box-shadow: 0 12px 36px #0000000d;
+  transform: translateY(-4px) scale(1.012);
+}
+
+.channel-card.is-moving-away {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(18px) scale(0.985);
 }
 
 .channel-card .url-icon {
@@ -758,6 +777,7 @@ code {
   border-radius: 8px;
   padding: 18px;
   background: #ffffff;
+  animation: channel-detail-in 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .x-setup-head {
@@ -803,6 +823,65 @@ code {
   white-space: nowrap;
 }
 
+.x-login-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 12px;
+}
+
+.x-login-card strong,
+.x-codex-head strong {
+  color: #171717;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 650;
+}
+
+.x-login-card p {
+  margin: 2px 0 0;
+  color: #666666;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.x-codex-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #eaeaea;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fafafa;
+}
+
+.x-codex-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.x-codex-head span {
+  color: #666666;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 550;
+}
+
+.x-codex-output {
+  display: grid;
+  gap: 6px;
+}
+
+.x-codex-output p {
+  margin: 0;
+  color: #666666;
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .x-setup-steps {
   display: grid;
   gap: 8px;
@@ -830,6 +909,13 @@ code {
   color: #666666;
   font-size: 13px;
   line-height: 20px;
+}
+
+.x-analysis-actions {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 12px;
 }
 
 .x-setup-files {
@@ -904,6 +990,18 @@ code {
   color: #666666;
   font-size: 13px;
   line-height: 20px;
+}
+
+@keyframes channel-detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .product-description {
