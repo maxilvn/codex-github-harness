@@ -124,18 +124,23 @@ function BrandMark() {
 }
 
 function UrlIcon({ websiteUrl }: { websiteUrl: string }) {
-  const [failedFor, setFailedFor] = React.useState<string | null>(null);
-  const faviconUrl = faviconForUrl(websiteUrl);
-  const showFavicon = faviconUrl && failedFor !== faviconUrl;
+  const [candidateIndex, setCandidateIndex] = React.useState(0);
+  const faviconUrls = faviconUrlsForUrl(websiteUrl);
+  const faviconKey = faviconUrls.join("|");
+  const faviconUrl = faviconUrls[candidateIndex] ?? null;
+
+  React.useEffect(() => {
+    setCandidateIndex(0);
+  }, [faviconKey]);
 
   return (
     <span className="url-icon" aria-hidden="true">
-      {showFavicon ? (
+      {faviconUrl ? (
         <img
           key={faviconUrl}
           src={faviconUrl}
           alt=""
-          onError={() => setFailedFor(faviconUrl)}
+          onError={() => setCandidateIndex((index) => index + 1)}
         />
       ) : (
         <svg viewBox="0 0 16 16" focusable="false">
@@ -502,18 +507,21 @@ function stripMarkdownLinks(value: string) {
     .trim();
 }
 
-function faviconForUrl(value: string) {
+function faviconUrlsForUrl(value: string) {
   const trimmed = value.trim();
-  if (!trimmed || !trimmed.includes(".")) return null;
+  if (!trimmed || !trimmed.includes(".")) return [];
   try {
     const url = new URL(
       trimmed.startsWith("http://") || trimmed.startsWith("https://")
         ? trimmed
         : `https://${trimmed}`,
     );
-    return `${url.origin}/favicon.ico`;
+    return [
+      `${url.origin}/favicon.ico`,
+      `https://icons.duckduckgo.com/ip3/${url.hostname}.ico`,
+    ];
   } catch {
-    return null;
+    return [];
   }
 }
 
