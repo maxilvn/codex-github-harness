@@ -457,14 +457,6 @@ type MarketingChannel = {
 
 const SUPPORTED_CHANNELS: MarketingChannel[] = [
   {
-    id: "seo",
-    name: "SEO",
-    faviconUrl: "https://search.google.com/search-console",
-    priority: "Optional",
-    reason:
-      "Use search demand and website content when organic intent is visible.",
-  },
-  {
     id: "x",
     name: "X",
     faviconUrl: "https://x.com",
@@ -487,6 +479,14 @@ const SUPPORTED_CHANNELS: MarketingChannel[] = [
     priority: "Optional",
     reason:
       "Use launches and technical discussion when the product has a founder or developer angle.",
+  },
+  {
+    id: "seo",
+    name: "SEO",
+    faviconUrl: "https://search.google.com/search-console",
+    priority: "Optional",
+    reason:
+      "Use search demand and website content when organic intent is visible.",
   },
 ];
 
@@ -598,11 +598,21 @@ function extractMarketingChannels(docs: ContextDoc[]) {
     };
   })
     .filter((channel) => channel.score > 0 && channel.priority !== "Not now")
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => channelDisplayRank(a.id) - channelDisplayRank(b.id));
 
   return detected.length
     ? detected.map(({ score: _, ...channel }) => channel)
     : SUPPORTED_CHANNELS;
+}
+
+function channelDisplayRank(channelId: string) {
+  const ranks: Record<string, number> = {
+    x: 10,
+    reddit: 20,
+    "hacker-news": 30,
+    seo: 40,
+  };
+  return ranks[channelId] ?? 100;
 }
 
 function extractChannelPriority(channel: MarketingChannel, content: string) {
