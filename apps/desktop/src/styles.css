@@ -276,6 +276,7 @@ input:focus {
   grid-template-columns: auto 1fr;
   align-items: center;
   gap: 10px;
+  min-height: 30px;
   text-align: left;
 }
 
@@ -283,7 +284,6 @@ input:focus {
   align-self: center;
   width: 30px;
   height: 30px;
-  transform: translateY(1px);
 }
 
 .company-lockup .url-icon img {
@@ -307,7 +307,7 @@ input:focus {
 .company-lockup strong {
   color: #171717;
   font-size: 20px;
-  line-height: 24px;
+  line-height: 30px;
   font-weight: 600;
 }
 
