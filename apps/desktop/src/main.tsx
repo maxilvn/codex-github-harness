@@ -511,7 +511,7 @@ function faviconForUrl(value: string) {
         ? trimmed
         : `https://${trimmed}`,
     );
-    return `https://www.google.com/s2/favicons?sz=64&domain_url=${encodeURIComponent(url.origin)}`;
+    return `${url.origin}/favicon.ico`;
   } catch {
     return null;
   }
