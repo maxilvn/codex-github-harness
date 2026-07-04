@@ -382,7 +382,7 @@ function extractCompetitors(docs: ContextDoc[], ownHost: string) {
     }
   }
 
-  return Array.from(competitors.values()).slice(0, 6);
+  return Array.from(competitors.values()).slice(0, 8);
 }
 
 function cleanCompetitorName(value: string) {

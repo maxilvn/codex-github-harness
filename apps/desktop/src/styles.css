@@ -563,12 +563,15 @@ code {
 .competitor-row .url-icon {
   width: 22px;
   height: 22px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .competitor-row .url-icon img {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
 }
 
 .empty-note {
