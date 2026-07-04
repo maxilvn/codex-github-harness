@@ -5,6 +5,8 @@ import { api } from "./lib/api";
 import type { CodexDetection, ContextDoc, ProjectState } from "./lib/types";
 import "./styles.css";
 
+const logoBlack = new URL("./assets/brand/two-wedge-logo-black-transparent.png", import.meta.url).href;
+
 function App() {
   const [codex, setCodex] = React.useState<CodexDetection | null>(null);
   const [project, setProject] = React.useState<ProjectState | null>(null);
@@ -60,7 +62,7 @@ function App() {
       {!project ? (
         <section className="topbar">
           <div className="brand">
-            <span className="brand-mark" aria-hidden="true" />
+            <BrandMark />
             <span>GTM Agent</span>
           </div>
           <CodexBadge codex={codex} />
@@ -95,6 +97,14 @@ function App() {
         <ProjectView project={project} />
       )}
     </main>
+  );
+}
+
+function BrandMark() {
+  return (
+    <span className="brand-mark" aria-hidden="true">
+      <img src={logoBlack} alt="" />
+    </span>
   );
 }
 

@@ -93,14 +93,21 @@ input:focus {
 }
 
 .brand-mark {
+  display: grid;
+  place-items: center;
   width: 24px;
   height: 24px;
   border: 1px solid #eaeaea;
   border-radius: 6px;
-  background:
-    linear-gradient(90deg, transparent 6px, #171717 6px 8px, transparent 8px 10px, #171717 10px 12px, transparent 12px 14px, #171717 14px 16px, transparent 16px),
-    #ffffff;
+  background: #ffffff;
   box-shadow: 0 1px 2px #0000000d;
+  overflow: hidden;
+}
+
+.brand-mark img {
+  width: 17px;
+  height: 17px;
+  object-fit: contain;
 }
 
 .panel {
