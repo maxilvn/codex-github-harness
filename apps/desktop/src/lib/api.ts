@@ -39,4 +39,7 @@ export const api = {
   openProjectInCodex(projectPath: string) {
     return call<void>("open_project_in_codex", { projectPath });
   },
+  openExternalUrl(url: string) {
+    return call<void>("open_external_url", { url });
+  },
 };

@@ -143,7 +143,8 @@ pub fn run() {
             create_project,
             load_project,
             run_initial_analysis,
-            open_project_in_codex
+            open_project_in_codex,
+            open_external_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running GTM Agent");
@@ -264,6 +265,13 @@ fn open_project_in_codex(project_path: String) -> AppResult<()> {
         .arg(project_path)
         .spawn()
         .map_err(|err| AppError::Open(err.to_string()))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> AppResult<()> {
+    let normalized = normalize_url(&url)?;
+    opener::open(normalized).map_err(|err| AppError::Open(err.to_string()))?;
     Ok(())
 }
 

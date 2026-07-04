@@ -262,35 +262,28 @@ input:focus {
 }
 
 .workspace {
+  --analysis-card-height: clamp(420px, calc(100vh - 180px), 640px);
   display: grid;
-  gap: 28px;
-}
-
-.brand-hero {
-  display: grid;
-  justify-items: center;
-  gap: 14px;
-  padding-top: 20px;
-  text-align: center;
+  gap: 0;
 }
 
 .company-lockup {
   display: inline-grid;
   grid-template-columns: auto 1fr;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   text-align: left;
 }
 
 .company-lockup .url-icon {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
 }
 
 .company-lockup .url-icon img {
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
 }
 
 .company-lockup strong,
@@ -300,28 +293,20 @@ input:focus {
 
 .company-lockup strong {
   color: #171717;
-  font-size: 22px;
-  line-height: 26px;
-  font-weight: 650;
+  font-size: 20px;
+  line-height: 24px;
+  font-weight: 600;
 }
 
 .company-lockup span {
-  color: #666666;
-  font-size: 15px;
-  line-height: 22px;
-}
-
-.brand-hero h1 {
-  margin: 0;
-  font-size: 34px;
-  line-height: 42px;
-  font-weight: 650;
-  letter-spacing: 0;
+  color: #7d7d7d;
+  font-size: 14px;
+  line-height: 20px;
 }
 
 .analysis-grid {
   display: grid;
-  grid-template-columns: minmax(250px, 0.85fr) minmax(0, 2fr);
+  grid-template-columns: minmax(260px, 0.9fr) minmax(0, 2fr);
   gap: 18px;
   align-items: start;
 }
@@ -340,7 +325,7 @@ input:focus {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 14px;
-  height: min(430px, calc(100vh - 330px));
+  height: var(--analysis-card-height);
   min-height: 320px;
   padding: 20px;
 }
@@ -425,15 +410,41 @@ code {
   overflow-wrap: anywhere;
 }
 
-.documents-panel {
-  display: grid;
-  gap: 14px;
-  padding: 4px 0;
+.documents-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  height: var(--analysis-card-height);
+  min-height: 320px;
+  padding: 20px 10px;
+  overflow: hidden;
+}
+
+.documents-card .company-lockup {
+  padding: 0 10px;
+}
+
+.product-description {
+  display: -webkit-box;
+  margin: 0;
+  padding: 0 10px;
+  overflow: hidden;
+  color: #4d4d4d;
+  font-size: 15px;
+  line-height: 24px;
+  -webkit-line-clamp: 7;
+  -webkit-box-orient: vertical;
+}
+
+.documents-section {
+  padding: 0 10px;
 }
 
 .document-list {
   display: grid;
   gap: 2px;
+  align-content: start;
+  flex: 0 0 auto;
 }
 
 .document-row {
@@ -446,7 +457,7 @@ code {
   min-height: 54px;
   border: 0;
   border-radius: 8px;
-  padding: 10px 6px;
+  padding: 10px;
   color: #171717;
   background: transparent;
   text-align: left;
@@ -484,6 +495,59 @@ code {
   color: #8f8f8f;
   font-size: 24px;
   line-height: 24px;
+}
+
+.competitors-section {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+  padding: 0 10px;
+}
+
+.competitor-list {
+  display: grid;
+  gap: 2px;
+}
+
+.competitor-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  height: auto;
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 0;
+  color: #171717;
+  background: transparent;
+  text-align: left;
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 500;
+}
+
+.competitor-row:hover {
+  background: #fafafa;
+}
+
+.competitor-row .url-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.competitor-row .url-icon img {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+}
+
+.empty-note {
+  margin: 0;
+  color: #8f8f8f;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .doc-modal-backdrop {
@@ -604,17 +668,8 @@ code {
     grid-template-columns: 1fr;
   }
 
-  .brand-hero {
-    padding-top: 8px;
-  }
-
-  .brand-hero h1 {
-    font-size: 28px;
-    line-height: 36px;
-  }
-
   .activity-card {
-    height: 380px;
+    height: 420px;
   }
 
   .url-bar {

@@ -140,23 +140,26 @@ function ProjectView({ project }: { project: ProjectState }) {
     : [{ kind: "idle", title: "Waiting", message: "Codex text output will appear here." }];
   const isRunning = run?.status === "running";
   const host = displayHost(project.config.websiteUrl);
+  const productDescription = extractProductDescription(project.docs);
+  const competitors = extractCompetitors(project.docs, host);
 
   return (
     <section className="workspace">
-      <div className="brand-hero">
-        <div className="company-lockup">
-          <UrlIcon websiteUrl={project.config.websiteUrl} />
-          <div>
-            <strong>{project.config.name}</strong>
-            <span>{host}</span>
-          </div>
-        </div>
-        <h1>Brand Analysis</h1>
-      </div>
-
       <div className="analysis-grid">
-        <aside className="documents-panel">
-          <p className="eyebrow">Documents</p>
+        <aside className="panel documents-card">
+          <div className="company-lockup">
+            <UrlIcon websiteUrl={project.config.websiteUrl} />
+            <div>
+              <strong>{project.config.name}</strong>
+              <span>{host}</span>
+            </div>
+          </div>
+
+          <p className="product-description">{productDescription}</p>
+
+          <div className="documents-section">
+            <p className="eyebrow">Documents</p>
+          </div>
           <div className="document-list">
             {project.docs.map((doc) => (
               <button
@@ -176,14 +179,32 @@ function ProjectView({ project }: { project: ProjectState }) {
               </button>
             ))}
           </div>
+
+          <div className="competitors-section">
+            <p className="eyebrow">Competitors</p>
+            {competitors.length ? (
+              <div className="competitor-list">
+                {competitors.map((competitor) => (
+                  <button
+                    className="competitor-row"
+                    key={competitor.url}
+                    type="button"
+                    onClick={() => void api.openExternalUrl(competitor.url)}
+                  >
+                    <UrlIcon websiteUrl={competitor.url} />
+                    <span>{competitor.host}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-note">Competitors will appear here after analysis.</p>
+            )}
+          </div>
         </aside>
 
         <section className="panel activity-card">
           <div className="activity-head">
-            <div>
-              <p className="eyebrow">Output</p>
-              <h2>{isRunning ? "Analysis running" : "Analysis output"}</h2>
-            </div>
+            <h2>Brand Analysis</h2>
           </div>
           <div className="activity-list">
             {activity.map((item, index) => (
@@ -256,6 +277,57 @@ type MarkdownBlock =
   | { type: "paragraph"; text: string }
   | { type: "list"; items: string[] }
   | { type: "ordered-list"; items: string[] };
+
+type Competitor = {
+  host: string;
+  url: string;
+};
+
+function docByKey(docs: ContextDoc[], key: string) {
+  const fileKey = key.replaceAll("_", "-");
+  return docs.find((doc) => doc.key === key || doc.fileName.includes(fileKey));
+}
+
+function extractProductDescription(docs: ContextDoc[]) {
+  const doc = docByKey(docs, "product_information");
+  if (!doc) return "Product description will appear here after analysis.";
+
+  const paragraph = markdownBlocks(doc.content).find((block) => {
+    if (block.type !== "paragraph") return false;
+    const text = block.text.toLowerCase();
+    return block.text.length > 60 && !text.includes("status:") && !text.includes("source url:");
+  });
+
+  return paragraph?.type === "paragraph"
+    ? paragraph.text
+    : "Product description will appear here after analysis.";
+}
+
+function extractCompetitors(docs: ContextDoc[], ownHost: string) {
+  const doc = docByKey(docs, "competitor_analysis");
+  if (!doc) return [];
+
+  const competitors = new Map<string, Competitor>();
+  const own = ownHost.toLowerCase();
+  const markdownLink = /\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/g;
+  const plainUrl = /https?:\/\/[^\s),]+/g;
+  const domain = /\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b/gi;
+
+  function add(value: string) {
+    const url = normalizeDisplayUrl(value);
+    if (!url) return;
+    const host = displayHost(url);
+    const key = host.toLowerCase();
+    if (!key || key.endsWith(".md") || key === own || key.endsWith(`.${own}`) || competitors.has(key)) return;
+    competitors.set(key, { host, url });
+  }
+
+  for (const match of doc.content.matchAll(markdownLink)) add(match[2]);
+  for (const match of doc.content.matchAll(plainUrl)) add(match[0]);
+  for (const match of doc.content.matchAll(domain)) add(match[0]);
+
+  return Array.from(competitors.values()).slice(0, 6);
+}
 
 function markdownBlocks(content: string): MarkdownBlock[] {
   const blocks: MarkdownBlock[] = [];
@@ -342,6 +414,20 @@ function faviconForUrl(value: string) {
         : `https://${trimmed}`,
     );
     return `https://www.google.com/s2/favicons?sz=64&domain_url=${encodeURIComponent(url.origin)}`;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeDisplayUrl(value: string) {
+  const trimmed = value.trim().replace(/[.,;:]+$/, "");
+  if (!trimmed || !trimmed.includes(".")) return null;
+  try {
+    return new URL(
+      trimmed.startsWith("http://") || trimmed.startsWith("https://")
+        ? trimmed
+        : `https://${trimmed}`,
+    ).toString();
   } catch {
     return null;
   }
