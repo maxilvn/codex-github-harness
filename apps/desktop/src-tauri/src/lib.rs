@@ -880,9 +880,7 @@ fn append_event(
 
 fn initial_analysis_prompt(config: &ProjectConfig) -> String {
     format!(
-        r#"# GTM Agent Initial Analysis
-
-Analyze this brand from public evidence and turn the findings into four concise GTM source documents.
+        r#"Analyze this brand from public evidence and turn the findings into four concise GTM source documents.
 
 Website: {url}
 
