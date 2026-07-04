@@ -51,6 +51,9 @@ export const api = {
   configureChannel(projectPath: string, channelId: string) {
     return call<ProjectState>("configure_channel", { projectPath, channelId });
   },
+  verifyXLogin(projectPath: string) {
+    return call<ProjectState>("verify_x_login", { projectPath });
+  },
   runXAccountAnalysis(projectPath: string) {
     return call<RunState>("run_x_account_analysis", { projectPath });
   },

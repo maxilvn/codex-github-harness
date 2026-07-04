@@ -192,6 +192,11 @@ struct XChannelStatus {
     updated_at: String,
 }
 
+struct XLoginCheck {
+    is_verified: bool,
+    account_label: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum RunStatus {
@@ -233,6 +238,7 @@ pub fn run() {
             load_project,
             run_initial_analysis,
             configure_channel,
+            verify_x_login,
             run_x_account_analysis,
             open_project_in_codex,
             open_external_url,
@@ -345,11 +351,45 @@ fn configure_channel(project_path: String, channel_id: String) -> AppResult<Proj
 }
 
 #[tauri::command]
+fn verify_x_login(project_path: String) -> AppResult<ProjectState> {
+    let path = PathBuf::from(project_path);
+    write_x_channel_setup(&path)?;
+    let login = check_x_login_in_chrome()?;
+    if login.is_verified {
+        write_x_channel_status(
+            &path,
+            XLoginStatus::Verified,
+            XAnalysisStatus::NotStarted,
+            login.account_label,
+        )?;
+    } else {
+        write_x_channel_status(
+            &path,
+            XLoginStatus::NeedsLogin,
+            XAnalysisStatus::NotStarted,
+            None,
+        )?;
+    }
+    load_project(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 fn run_x_account_analysis(app: tauri::AppHandle, project_path: String) -> AppResult<RunState> {
     let path = PathBuf::from(project_path);
     let config: ProjectConfig = read_json(&path.join(".gtm-agent/config.json"))?;
     write_x_channel_setup(&path)?;
-    write_x_channel_status(&path, XLoginStatus::Unknown, XAnalysisStatus::Running, None)?;
+    let current_status = read_x_channel_status(&path);
+    if current_status.login_status != XLoginStatus::Verified {
+        return Err(AppError::Invalid(
+            "verify the X login in Chrome before starting account analysis".into(),
+        ));
+    }
+    write_x_channel_status(
+        &path,
+        XLoginStatus::Verified,
+        XAnalysisStatus::Running,
+        current_status.account_label.clone(),
+    )?;
     let run_id = format!("x_run_{}", Utc::now().format("%Y%m%d%H%M%S"));
     let run_path = run_manifest_path(&path, &run_id);
     let log_path = path.join(".gtm-agent/runs").join(format!("{run_id}.jsonl"));
@@ -378,7 +418,7 @@ fn run_x_account_analysis(app: tauri::AppHandle, project_path: String) -> AppRes
             &path,
             &config,
             &run_for_thread,
-            &x_account_analysis_prompt(&config),
+            &x_account_analysis_prompt(&config, current_status.account_label.as_deref()),
             "X account analysis",
         );
         let status_result = match &result {
@@ -512,6 +552,49 @@ fn open_chrome_url(url: String) -> AppResult<()> {
         .spawn()
         .map_err(|err| AppError::Open(err.to_string()))?;
     Ok(())
+}
+
+fn check_x_login_in_chrome() -> AppResult<XLoginCheck> {
+    open_chrome_url("https://x.com/home".into())?;
+    thread::sleep(std::time::Duration::from_millis(1600));
+    let script = r#"
+tell application "Google Chrome"
+  if not (exists window 1) then return "missing\t\t"
+  set theTab to active tab of front window
+  set currentUrl to URL of theTab
+  set currentTitle to title of theTab
+  set accountLabel to ""
+  try
+    set accountLabel to execute theTab javascript "(() => { const blocked = new Set(['home','explore','notifications','messages','jobs','i','settings','compose','search','login','flow']); const links = Array.from(document.querySelectorAll('a[href^=\"/\"]')); const candidates = links.map(a => (a.getAttribute('href') || '').split('?')[0]).filter(h => /^\\/[A-Za-z0-9_]{1,15}$/.test(h)).map(h => h.slice(1)).filter(h => !blocked.has(h.toLowerCase())); return candidates.length ? '@' + candidates[0] : ''; })()"
+  end try
+  return currentUrl & "\t" & currentTitle & "\t" & accountLabel
+end tell
+"#;
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|err| AppError::Open(format!("failed to inspect Chrome: {err}")))?;
+    if !output.status.success() {
+        return Err(AppError::Open(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut parts = stdout.trim().split('\t');
+    let url = parts.next().unwrap_or_default().to_lowercase();
+    let _title = parts.next().unwrap_or_default();
+    let account = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| value.starts_with('@') && value.len() > 1)
+        .map(str::to_string);
+    let is_login_route = url.contains("/login") || url.contains("/i/flow/login");
+    let is_x_route = url.starts_with("https://x.com") || url.starts_with("https://twitter.com");
+    Ok(XLoginCheck {
+        is_verified: is_x_route && !is_login_route,
+        account_label: account,
+    })
 }
 
 fn execute_initial_analysis(
@@ -1507,21 +1590,19 @@ Keep the files concise but specific enough that future GTM tasks can use them as
     )
 }
 
-fn x_account_analysis_prompt(config: &ProjectConfig) -> String {
+fn x_account_analysis_prompt(config: &ProjectConfig, account_label: Option<&str>) -> String {
+    let account = account_label.unwrap_or("the currently signed-in X account");
     format!(
-        r#"Use [@chrome](plugin://chrome@openai-bundled) to analyze the currently signed-in X account for this GTM workspace.
+        r#"Use [@chrome](plugin://chrome@openai-bundled) to analyze {account} for this GTM workspace.
 
 Website: {url}
 Brand: {name}
+Account verified by app: {account}
 
 Goal:
 Configure the X channel for draft-first outreach. Do not post, like, follow, send, or publicly interact. Only inspect the logged-in account and write local channel context files.
 
-First action, before reading memory, browsing the web, or reviewing local brand files:
-- Use Chrome to open or inspect `https://x.com/home`.
-- Verify whether the current Chrome profile is signed into X.
-- If no account is signed in, immediately write `.gtm-agent/channels/x/status.json` with `loginStatus: "needs_login"`, `analysisStatus: "not_started"`, `accountLabel: null`, and stop.
-- If an account is signed in, identify the visible handle/name from the profile or account switcher, then continue with the account analysis.
+The app has already verified that Chrome is signed into X. Do not spend the run checking whether login exists. Open or inspect the account in Chrome only to learn its visible profile, recent posts, replies, and account-specific voice.
 
 Then rewrite only these files:
 - `.gtm-agent/channels/x/profile.md`
@@ -1561,6 +1642,7 @@ Write valid JSON with this exact shape:
 
 Do not create outreach drafts in this run. Do not modify backend queue files such as `opportunities.jsonl`, `runs.jsonl`, or files in `drafts/` unless they do not exist and are needed as empty placeholders.
 "#,
+        account = account,
         url = config.website_url,
         name = config.name
     )

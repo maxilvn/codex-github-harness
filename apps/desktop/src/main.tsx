@@ -206,6 +206,9 @@ function ProjectView({
   const [configuringChannelId, setConfiguringChannelId] = React.useState<
     string | null
   >(null);
+  const [checkingChannelId, setCheckingChannelId] = React.useState<
+    string | null
+  >(null);
   const [analyzingChannelId, setAnalyzingChannelId] = React.useState<
     string | null
   >(null);
@@ -285,12 +288,20 @@ function ProjectView({
 
   async function verifyXAccountInChrome() {
     setChannelError(null);
+    setCheckingChannelId("x");
     try {
-      await api.openChromeUrl("https://x.com/home");
-      await new Promise((resolve) => window.setTimeout(resolve, 900));
-      await analyzeXAccount();
+      const checkedProject = await api.verifyXLogin(project.config.path);
+      onProjectUpdate(checkedProject);
+      const xSetup = checkedProject.channelSetups.find(
+        (setup) => setup.id === "x",
+      );
+      if (xSetup?.loginStatus === "verified") {
+        await analyzeXAccount();
+      }
     } catch (err) {
       setChannelError(String(err));
+    } finally {
+      setCheckingChannelId(null);
     }
   }
 
@@ -516,6 +527,7 @@ function ProjectView({
                 run?.kind === "x_account_analysis" ? project.runActivity : []
               }
               isConfiguring={configuringChannelId === activeChannel.id}
+              isChecking={checkingChannelId === activeChannel.id}
               isAnalyzing={analyzingChannelId === activeChannel.id}
               onVerify={() => void verifyXAccountInChrome()}
             />
@@ -613,6 +625,7 @@ function XChannelSetupPanel({
   run,
   activity,
   isConfiguring,
+  isChecking,
   isAnalyzing,
   onVerify,
 }: {
@@ -621,6 +634,7 @@ function XChannelSetupPanel({
   run: RunState | null;
   activity: RunActivity[];
   isConfiguring: boolean;
+  isChecking: boolean;
   isAnalyzing: boolean;
   onVerify: () => void;
 }) {
@@ -629,6 +643,7 @@ function XChannelSetupPanel({
     isAnalyzing ||
     run?.status === "running" ||
     setup?.analysisStatus === "running";
+  const isLoginActionBusy = isChecking || isRunActive || isConfiguring;
   const loginLabel =
     setup?.accountLabel ??
     (setup?.loginStatus === "verified"
@@ -656,9 +671,15 @@ function XChannelSetupPanel({
           className="secondary"
           type="button"
           onClick={onVerify}
-          disabled={isRunActive || isConfiguring}
+          disabled={isLoginActionBusy}
         >
-          {isRunActive ? "Analyzing account..." : "Verify in Chrome"}
+          {isChecking
+            ? "Checking login..."
+            : isRunActive
+              ? "Analyzing account..."
+              : setup?.loginStatus === "needs_login"
+                ? "Open X login"
+                : "Verify in Chrome"}
         </button>
       </div>
 
