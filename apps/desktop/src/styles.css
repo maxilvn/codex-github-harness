@@ -664,6 +664,7 @@ code {
 }
 
 .channel-card {
+  --channel-motion-ease: cubic-bezier(0.16, 1, 0.3, 1);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -674,24 +675,37 @@ code {
   padding: 14px;
   background: #ffffff;
   transform: translateY(0) scale(1);
+  will-change: transform, opacity;
   transition:
-    opacity 180ms ease,
-    transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    border-color 180ms ease,
-    box-shadow 240ms ease;
+    opacity 260ms ease,
+    transform 420ms var(--channel-motion-ease),
+    border-color 260ms ease,
+    box-shadow 420ms var(--channel-motion-ease);
 }
 
 .channel-card.is-opening {
   z-index: 1;
   border-color: #d4d4d4;
-  box-shadow: 0 12px 36px #0000000d;
-  transform: translateY(-4px) scale(1.012);
+  box-shadow: 0 18px 48px #00000012;
+  transform: translateY(-6px) scale(1.018);
 }
 
 .channel-card.is-moving-away {
   opacity: 0;
   pointer-events: none;
-  transform: translateY(18px) scale(0.985);
+  transform: translateY(24px) scale(0.982);
+}
+
+.channel-card-reddit.is-moving-away {
+  transition-delay: 30ms;
+}
+
+.channel-card-hacker-news.is-moving-away {
+  transition-delay: 60ms;
+}
+
+.channel-card-seo.is-moving-away {
+  transition-delay: 90ms;
 }
 
 .channel-card .url-icon {
@@ -777,7 +791,7 @@ code {
   border-radius: 8px;
   padding: 18px;
   background: #ffffff;
-  animation: channel-detail-in 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: channel-detail-in 520ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .x-setup-head {
@@ -911,13 +925,6 @@ code {
   line-height: 20px;
 }
 
-.x-analysis-actions {
-  display: flex;
-  justify-content: flex-end;
-  border-top: 1px solid #f0f0f0;
-  padding-top: 12px;
-}
-
 .x-setup-files {
   display: grid;
   gap: 8px;
@@ -995,7 +1002,7 @@ code {
 @keyframes channel-detail-in {
   from {
     opacity: 0;
-    transform: translateY(14px) scale(0.985);
+    transform: translateY(18px) scale(0.982);
   }
 
   to {

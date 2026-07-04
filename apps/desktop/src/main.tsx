@@ -211,18 +211,21 @@ function ProjectView({
   >(null);
   const [channelError, setChannelError] = React.useState<string | null>(null);
   const run = project.latestRun;
-  const activity = project.runActivity.length
-    ? project.runActivity
-    : [
-        {
-          kind: "idle",
-          title: "Waiting",
-          message: "Analysis updates will appear here.",
-        },
-      ];
-  const isRunning = run?.status === "running";
+  const isInitialAnalysisRun = run?.kind === "initial_analysis";
+  const isInitialAnalysisRunning =
+    isInitialAnalysisRun && run?.status === "running";
+  const activity =
+    isInitialAnalysisRun && project.runActivity.length
+      ? project.runActivity
+      : [
+          {
+            kind: "idle",
+            title: "Waiting",
+            message: "Analysis updates will appear here.",
+          },
+        ];
   const isAnalysisComplete =
-    !isRunning && project.docs.every(hasDocumentContent);
+    !isInitialAnalysisRunning && project.docs.every(hasDocumentContent);
   const runLabel = project.docs.some(hasDocumentContent)
     ? "Writing..."
     : "Analyzing...";
@@ -255,7 +258,7 @@ function ProjectView({
     window.setTimeout(() => {
       setActiveChannelId(channelId);
       setOpeningChannelId(null);
-    }, 240);
+    }, 360);
     setConfiguringChannelId(channelId);
     try {
       const next = await api.configureChannel(project.config.path, channelId);
@@ -277,6 +280,17 @@ function ProjectView({
       setChannelError(String(err));
     } finally {
       setAnalyzingChannelId(null);
+    }
+  }
+
+  async function verifyXAccountInChrome() {
+    setChannelError(null);
+    try {
+      await api.openChromeUrl("https://x.com/home");
+      await new Promise((resolve) => window.setTimeout(resolve, 900));
+      await analyzeXAccount();
+    } catch (err) {
+      setChannelError(String(err));
     }
   }
 
@@ -394,7 +408,7 @@ function ProjectView({
                 <p>{item.message}</p>
               </article>
             ))}
-            {isRunning ? (
+            {isInitialAnalysisRunning ? (
               <div className="analyzing-shimmer">{runLabel}</div>
             ) : null}
           </div>
@@ -446,6 +460,7 @@ function ProjectView({
                 <article
                   className={[
                     "channel-card",
+                    `channel-card-${channel.id}`,
                     openingChannelId === channel.id ? "is-opening" : "",
                     openingChannelId && openingChannelId !== channel.id
                       ? "is-moving-away"
@@ -502,8 +517,7 @@ function ProjectView({
               }
               isConfiguring={configuringChannelId === activeChannel.id}
               isAnalyzing={analyzingChannelId === activeChannel.id}
-              onOpenLogin={() => void api.openChromeUrl("https://x.com/login")}
-              onAnalyze={() => void analyzeXAccount()}
+              onVerify={() => void verifyXAccountInChrome()}
             />
           ) : null}
 
@@ -600,8 +614,7 @@ function XChannelSetupPanel({
   activity,
   isConfiguring,
   isAnalyzing,
-  onOpenLogin,
-  onAnalyze,
+  onVerify,
 }: {
   channel: MarketingChannel;
   setup: ChannelSetup | null;
@@ -609,8 +622,7 @@ function XChannelSetupPanel({
   activity: RunActivity[];
   isConfiguring: boolean;
   isAnalyzing: boolean;
-  onOpenLogin: () => void;
-  onAnalyze: () => void;
+  onVerify: () => void;
 }) {
   const isReady = setup?.status === "ready";
   const isRunActive =
@@ -640,8 +652,13 @@ function XChannelSetupPanel({
           <strong>Use existing Chrome login</strong>
           <p>{loginLabel}</p>
         </div>
-        <button className="secondary" type="button" onClick={onOpenLogin}>
-          Open X login
+        <button
+          className="secondary"
+          type="button"
+          onClick={onVerify}
+          disabled={isRunActive || isConfiguring}
+        >
+          {isRunActive ? "Checking..." : "Verify in Chrome"}
         </button>
       </div>
 
@@ -690,16 +707,6 @@ function XChannelSetupPanel({
           description="Approved drafts can later open the source post and paste the reply so the user only has to review and send."
           status={isReady ? "Next" : "Planned"}
         />
-      </div>
-
-      <div className="x-analysis-actions">
-        <button
-          type="button"
-          onClick={onAnalyze}
-          disabled={isRunActive || isConfiguring}
-        >
-          {isRunActive ? "Analyzing..." : "Analyze account with Codex"}
-        </button>
       </div>
 
       {isReady ? (
