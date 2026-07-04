@@ -1,6 +1,7 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -69,6 +70,7 @@ struct ProjectState {
     codex: CodexDetection,
     docs: Vec<ContextDoc>,
     latest_run: Option<RunState>,
+    run_activity: Vec<RunActivity>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +93,14 @@ struct RunState {
     completed_at: Option<String>,
     log_path: String,
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunActivity {
+    kind: String,
+    title: String,
+    message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -182,11 +192,18 @@ fn create_project(request: CreateProjectRequest) -> AppResult<ProjectState> {
 fn load_project(project_path: String) -> AppResult<ProjectState> {
     let path = PathBuf::from(project_path);
     let config: ProjectConfig = read_json(&path.join(".gtm-agent/config.json"))?;
+    let latest_run = latest_run(&path)?;
+    let run_activity = latest_run
+        .as_ref()
+        .map(|run| read_run_activity(&PathBuf::from(&run.log_path)))
+        .transpose()?
+        .unwrap_or_default();
     Ok(ProjectState {
         config,
         codex: detect_codex_impl(),
         docs: read_docs(&path)?,
-        latest_run: latest_run(&path)?,
+        latest_run,
+        run_activity,
     })
 }
 
@@ -721,6 +738,134 @@ fn latest_run(project_path: &Path) -> AppResult<Option<RunState>> {
     manifests.last().map(|path| read_json(path)).transpose()
 }
 
+fn read_run_activity(log_path: &Path) -> AppResult<Vec<RunActivity>> {
+    if !log_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let file = File::open(log_path)?;
+    let mut activity = Vec::new();
+    let mut message_deltas = HashMap::<String, String>::new();
+    let mut completed_messages = HashSet::<String>::new();
+
+    for line in BufReader::new(file).lines() {
+        let line = line?;
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let method = value.get("method").and_then(Value::as_str);
+        match method {
+            Some("thread/started") => activity.push(RunActivity {
+                kind: "thread".into(),
+                title: "Codex thread".into(),
+                message: "Session created in Codex Desktop.".into(),
+            }),
+            Some("item/started") => {
+                if value.pointer("/params/item/type").and_then(Value::as_str)
+                    == Some("commandExecution")
+                {
+                    if let Some(command) = value
+                        .pointer("/params/item/command")
+                        .and_then(Value::as_str)
+                    {
+                        activity.push(RunActivity {
+                            kind: "command".into(),
+                            title: "Running command".into(),
+                            message: compact_text(command, 140),
+                        });
+                    }
+                }
+            }
+            Some("item/agentMessage/delta") => {
+                if let (Some(item_id), Some(delta)) = (
+                    value.pointer("/params/itemId").and_then(Value::as_str),
+                    value.pointer("/params/delta").and_then(Value::as_str),
+                ) {
+                    message_deltas
+                        .entry(item_id.to_string())
+                        .or_default()
+                        .push_str(delta);
+                }
+            }
+            Some("item/completed") => match value
+                .pointer("/params/item/type")
+                .and_then(Value::as_str)
+            {
+                Some("agentMessage") => {
+                    if let Some(text) = value.pointer("/params/item/text").and_then(Value::as_str) {
+                        if let Some(item_id) =
+                            value.pointer("/params/item/id").and_then(Value::as_str)
+                        {
+                            completed_messages.insert(item_id.to_string());
+                        }
+                        activity.push(RunActivity {
+                            kind: "message".into(),
+                            title: "Codex".into(),
+                            message: compact_text(text, 520),
+                        });
+                    }
+                }
+                Some("commandExecution") => {
+                    let status = value
+                        .pointer("/params/item/status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("completed");
+                    let command = value
+                        .pointer("/params/item/command")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Command finished");
+                    activity.push(RunActivity {
+                        kind: "command".into(),
+                        title: format!("Command {status}"),
+                        message: compact_text(command, 140),
+                    });
+                }
+                _ => {}
+            },
+            Some("turn/diff/updated") => activity.push(RunActivity {
+                kind: "files".into(),
+                title: "Files changed".into(),
+                message: "Codex wrote updates to the workspace.".into(),
+            }),
+            Some("turn/completed") => {
+                let status = value
+                    .pointer("/params/turn/status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("completed");
+                activity.push(RunActivity {
+                    kind: "done".into(),
+                    title: "Turn finished".into(),
+                    message: format!("Codex turn {status}."),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    for (item_id, text) in message_deltas {
+        if !completed_messages.contains(&item_id) && !text.trim().is_empty() {
+            activity.push(RunActivity {
+                kind: "message".into(),
+                title: "Codex".into(),
+                message: compact_text(&text, 520),
+            });
+        }
+    }
+
+    let keep_from = activity.len().saturating_sub(12);
+    Ok(activity.into_iter().skip(keep_from).collect())
+}
+
+fn compact_text(value: &str, max_chars: usize) -> String {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= max_chars {
+        return compact;
+    }
+    let mut truncated = compact.chars().take(max_chars).collect::<String>();
+    truncated.push_str("...");
+    truncated
+}
+
 fn run_manifest_path(project_path: &Path, run_id: &str) -> PathBuf {
     project_path
         .join(".gtm-agent/runs")
@@ -943,6 +1088,48 @@ mod tests {
             completed_turn_error(&failed).as_deref(),
             Some("model failed")
         );
+    }
+
+    #[test]
+    fn reads_run_activity_from_app_server_log() {
+        let log_path =
+            std::env::temp_dir().join(format!("gtm-agent-log-{}.jsonl", Uuid::new_v4().simple()));
+        fs::write(
+            &log_path,
+            [
+                serde_json::json!({
+                    "method": "thread/started",
+                    "params": { "thread": { "id": "thread_123" } }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "type": "agentMessage",
+                            "id": "msg_123",
+                            "text": "I found the source material."
+                        }
+                    }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "method": "turn/completed",
+                    "params": { "turn": { "status": "completed" } }
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let activity = read_run_activity(&log_path).unwrap();
+        assert_eq!(activity.len(), 3);
+        assert_eq!(activity[0].title, "Codex thread");
+        assert_eq!(activity[1].message, "I found the source material.");
+        assert_eq!(activity[2].message, "Codex turn completed.");
+
+        fs::remove_file(log_path).unwrap();
     }
 
     #[test]

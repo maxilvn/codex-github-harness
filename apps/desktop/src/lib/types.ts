@@ -32,9 +32,16 @@ export interface RunState {
   error?: string | null;
 }
 
+export interface RunActivity {
+  kind: string;
+  title: string;
+  message: string;
+}
+
 export interface ProjectState {
   config: ProjectConfig;
   codex: CodexDetection;
   docs: ContextDoc[];
   latestRun?: RunState | null;
+  runActivity: RunActivity[];
 }

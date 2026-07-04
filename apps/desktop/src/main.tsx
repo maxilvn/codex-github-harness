@@ -71,10 +71,10 @@ function App() {
 
   return (
     <main className="shell">
-      <section className="header">
-        <div>
-          <h1>GTM Agent</h1>
-          <p>Local Codex workspaces for brand and GTM analysis.</p>
+      <section className="topbar">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true" />
+          <span>GTM Agent</span>
         </div>
         <CodexBadge codex={project?.codex ?? codex} />
       </section>
@@ -82,15 +82,13 @@ function App() {
       {error ? <div className="error">{error}</div> : null}
 
       {!project ? (
-        <section className="panel onboarding">
-          <div>
-            <h2>Create a Codex GTM workspace</h2>
-            <p>
-              Enter a URL. GTM Agent creates a local folder, starts a persisted
-              Codex session, and writes the initial strategy documents there.
-            </p>
+        <section className="onboarding">
+          <div className="onboarding-copy">
+            <p className="eyebrow">Codex workspace</p>
+            <h1>Website analysis</h1>
           </div>
-          <div className="form-row">
+          <div className="url-bar">
+            <UrlIcon websiteUrl={websiteUrl} />
             <input
               autoFocus
               value={websiteUrl}
@@ -98,7 +96,7 @@ function App() {
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !busy) void createProject();
               }}
-              placeholder="example.com"
+              placeholder="website.com"
             />
             <button onClick={createProject} disabled={busy || !websiteUrl.trim()}>
               {busy ? "Creating..." : "Analyze"}
@@ -114,6 +112,31 @@ function App() {
         />
       )}
     </main>
+  );
+}
+
+function UrlIcon({ websiteUrl }: { websiteUrl: string }) {
+  const [failedFor, setFailedFor] = React.useState<string | null>(null);
+  const faviconUrl = faviconForUrl(websiteUrl);
+  const showFavicon = faviconUrl && failedFor !== faviconUrl;
+
+  return (
+    <span className="url-icon" aria-hidden="true">
+      {showFavicon ? (
+        <img
+          key={faviconUrl}
+          src={faviconUrl}
+          alt=""
+          onError={() => setFailedFor(faviconUrl)}
+        />
+      ) : (
+        <>
+          <span />
+          <span />
+          <span />
+        </>
+      )}
+    </span>
   );
 }
 
@@ -139,11 +162,15 @@ function ProjectView({
   onOpen: () => Promise<void>;
 }) {
   const run = project.latestRun;
+  const activity = project.runActivity.length
+    ? project.runActivity
+    : [{ kind: "idle", title: "Waiting", message: "Codex activity will appear here." }];
+
   return (
     <section className="workspace">
-      <div className="panel project-summary">
+      <div className="workspace-header">
         <div>
-          <p className="label">Workspace</p>
+          <p className="eyebrow">Workspace</p>
           <h2>{project.config.name}</h2>
           <code>{project.config.path}</code>
         </div>
@@ -155,29 +182,41 @@ function ProjectView({
         </div>
       </div>
 
-      <div className="grid">
-        <section className="panel run-panel">
-          <p className="label">Latest Codex run</p>
-          {run ? (
-            <dl>
-              <dt>Status</dt>
-              <dd>{run.status}</dd>
-              <dt>Thread</dt>
-              <dd>{run.codexThreadId || "Waiting for thread id"}</dd>
-              <dt>Log</dt>
-              <dd><code>{run.logPath}</code></dd>
-              {run.error ? (
-                <>
-                  <dt>Error</dt>
-                  <dd>{run.error}</dd>
-                </>
-              ) : null}
-            </dl>
-          ) : (
-            <p className="muted">No runs yet.</p>
-          )}
-        </section>
+      <section className="panel activity-card">
+        <div className="activity-head">
+          <div>
+            <p className="eyebrow">Codex session</p>
+            <h3>{run?.status === "running" ? "Running analysis" : "Latest activity"}</h3>
+          </div>
+          <span className={`status-pill ${run?.status ?? "idle"}`}>
+            {run?.status ?? "idle"}
+          </span>
+        </div>
+        <div className="activity-list">
+          {activity.map((item, index) => (
+            <article className="activity-item" key={`${item.title}-${index}`}>
+              <span className={`activity-dot ${item.kind}`} />
+              <div>
+                <strong>{item.title}</strong>
+                <p>{item.message}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+        {run?.codexThreadId ? (
+          <div className="activity-meta">
+            <span>Thread</span>
+            <code>{run.codexThreadId}</code>
+          </div>
+        ) : null}
+        {run?.error ? <p className="run-error">{run.error}</p> : null}
+      </section>
 
+      <section className="docs-section">
+        <div className="section-head">
+          <p className="eyebrow">Generated files</p>
+          <span>{project.docs.length} markdown docs</span>
+        </div>
         <section className="docs">
           {project.docs.map((doc) => (
             <article className="panel doc" key={doc.key}>
@@ -187,9 +226,24 @@ function ProjectView({
             </article>
           ))}
         </section>
-      </div>
+      </section>
     </section>
   );
+}
+
+function faviconForUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || !trimmed.includes(".")) return null;
+  try {
+    const url = new URL(
+      trimmed.startsWith("http://") || trimmed.startsWith("https://")
+        ? trimmed
+        : `https://${trimmed}`,
+    );
+    return `https://www.google.com/s2/favicons?sz=64&domain_url=${encodeURIComponent(url.origin)}`;
+  } catch {
+    return null;
+  }
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
