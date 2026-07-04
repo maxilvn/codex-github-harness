@@ -5,7 +5,7 @@ import { api } from "./lib/api";
 import type { CodexDetection, ContextDoc, ProjectState } from "./lib/types";
 import "./styles.css";
 
-const appIcon = new URL("./assets/brand/two-wedge-logo-app-icon-clean-black-bg.png", import.meta.url).href;
+const logoBlack = new URL("./assets/brand/two-wedge-logo-black-transparent.png", import.meta.url).href;
 
 function App() {
   const [codex, setCodex] = React.useState<CodexDetection | null>(null);
@@ -103,7 +103,7 @@ function App() {
 function BrandMark() {
   return (
     <span className="brand-mark" aria-hidden="true">
-      <img src={appIcon} alt="" />
+      <img src={logoBlack} alt="" />
     </span>
   );
 }
