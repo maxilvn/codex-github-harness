@@ -791,8 +791,8 @@ function faviconUrlsForUrl(value: string) {
         : `https://${trimmed}`,
     );
     return [
-      `${url.origin}/favicon.ico`,
       `https://icons.duckduckgo.com/ip3/${url.hostname}.ico`,
+      `${url.origin}/favicon.ico`,
     ];
   } catch {
     return [];
