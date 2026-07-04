@@ -276,14 +276,17 @@ input:focus {
   grid-template-columns: auto 1fr;
   align-items: center;
   gap: 10px;
-  min-height: 30px;
+  min-height: 32px;
   text-align: left;
 }
 
 .company-lockup .url-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   align-self: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
 }
 
 .company-lockup .url-icon img {
@@ -291,12 +294,14 @@ input:focus {
   width: 22px;
   height: 22px;
   border-radius: 5px;
+  transform: translateY(1px);
 }
 
 .company-lockup .url-icon svg {
   display: block;
   width: 14px;
   height: 14px;
+  transform: translateY(1px);
 }
 
 .company-lockup strong,
@@ -307,7 +312,7 @@ input:focus {
 .company-lockup strong {
   color: #171717;
   font-size: 20px;
-  line-height: 30px;
+  line-height: 32px;
   font-weight: 600;
 }
 
