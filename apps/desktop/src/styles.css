@@ -540,6 +540,30 @@ code {
   background: #fafafa;
 }
 
+.competitor-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.competitor-copy strong {
+  overflow: hidden;
+  color: #171717;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.competitor-copy small {
+  overflow: hidden;
+  color: #8f8f8f;
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .competitor-row .url-icon {
   width: 24px;
   height: 24px;

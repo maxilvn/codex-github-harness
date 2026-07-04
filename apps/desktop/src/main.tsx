@@ -201,7 +201,10 @@ function ProjectView({ project }: { project: ProjectState }) {
                     onClick={() => void api.openExternalUrl(competitor.url)}
                   >
                     <UrlIcon websiteUrl={competitor.url} />
-                    <span>{competitor.host}</span>
+                    <span className="competitor-copy">
+                      <strong>{competitor.label}</strong>
+                      <small>{competitor.host}</small>
+                    </span>
                   </button>
                 ))}
               </div>
@@ -288,6 +291,7 @@ type MarkdownBlock =
   | { type: "ordered-list"; items: string[] };
 
 type Competitor = {
+  label: string;
   host: string;
   url: string;
 };
@@ -329,21 +333,85 @@ function extractCompetitors(docs: ContextDoc[], ownHost: string) {
   const markdownLink = /\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/g;
   const plainUrl = /https?:\/\/[^\s),]+/g;
   const domain = /\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b/gi;
+  const heading = /^###\s+(.+)$/gm;
+  const examples = /examples? found:\s*([^\n]+)/gi;
 
-  function add(value: string) {
+  function add(value: string, label?: string) {
     const url = normalizeDisplayUrl(value);
     if (!url) return;
     const host = displayHost(url);
     const key = host.toLowerCase();
     if (!key || key.endsWith(".md") || key === own || key.endsWith(`.${own}`) || competitors.has(key)) return;
-    competitors.set(key, { host, url });
+    competitors.set(key, { label: label?.trim() || host, host, url });
   }
 
-  for (const match of doc.content.matchAll(markdownLink)) add(match[2]);
+  function addName(value: string) {
+    const name = cleanCompetitorName(value);
+    if (!name || isGenericCompetitorCategory(name)) return;
+    const knownUrl = knownCompetitorUrl(name);
+    const slug = slugDomain(name);
+    if (!knownUrl && slug.length < 3) return;
+    add(knownUrl || `https://${slug}.com`, name);
+  }
+
+  for (const match of doc.content.matchAll(markdownLink)) add(match[2], match[1]);
   for (const match of doc.content.matchAll(plainUrl)) add(match[0]);
   for (const match of doc.content.matchAll(domain)) add(match[0]);
+  for (const match of doc.content.matchAll(heading)) addName(match[1]);
+  for (const match of doc.content.matchAll(examples)) {
+    for (const item of match[1].split(/,|\band\b/gi)) {
+      const domainMatch = item.match(domain);
+      if (domainMatch) {
+        add(domainMatch[0], cleanCompetitorName(item.replace(domainMatch[0], "")));
+      } else {
+        addName(item);
+      }
+    }
+  }
 
   return Array.from(competitors.values()).slice(0, 6);
+}
+
+function cleanCompetitorName(value: string) {
+  return cleanInline(value)
+    .replace(/^[\s:;/,-]+|[\s:;/,-]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isGenericCompetitorCategory(value: string) {
+  const lower = value.toLowerCase();
+  return [
+    "services",
+    "advisors",
+    "lawyers",
+    "spreadsheets",
+    "manual folders",
+    "cloud storage",
+    "notes apps",
+    "property management",
+    "landlord tools",
+    "alternatives",
+  ].some((term) => lower.includes(term));
+}
+
+function knownCompetitorUrl(value: string) {
+  const key = value.toLowerCase();
+  const known: Record<string, string> = {
+    "wispr flow": "https://wisprflow.ai",
+    superwhisper: "https://superwhisper.com",
+    "apple dictation and apple intelligence writing tools": "https://apple.com",
+    "aqua voice": "https://app.aquavoice.com",
+  };
+  return known[key] ?? null;
+}
+
+function slugDomain(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
 }
 
 function markdownBlocks(content: string): MarkdownBlock[] {
