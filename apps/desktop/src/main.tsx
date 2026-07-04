@@ -5,7 +5,10 @@ import { api } from "./lib/api";
 import type { AgentProviderStatus, ContextDoc, ProjectState } from "./lib/types";
 import "./styles.css";
 
-const logoBlack = new URL("./assets/brand/two-wedge-logo-black-transparent.png", import.meta.url).href;
+const logoBlack = new URL(
+  "./assets/brand/two-wedge-logo-black-transparent.png",
+  import.meta.url,
+).href;
 
 function App() {
   const [agentProvider, setAgentProvider] = React.useState<AgentProviderStatus | null>(null);
@@ -32,7 +35,8 @@ function App() {
       });
     });
     let cancelled = false;
-    api.loadLastProject()
+    api
+      .loadLastProject()
       .then((lastProject) => {
         if (!cancelled && lastProject) setProject(lastProject);
       })
@@ -53,9 +57,11 @@ function App() {
     let unlisten: (() => void) | undefined;
     listen("project-updated", () => {
       void refreshProject().catch((err) => setError(String(err)));
-    }).then((dispose) => {
-      unlisten = dispose;
-    }).catch(() => undefined);
+    })
+      .then((dispose) => {
+        unlisten = dispose;
+      })
+      .catch(() => undefined);
     return () => {
       window.clearInterval(timer);
       unlisten?.();
@@ -110,7 +116,10 @@ function App() {
               }}
               placeholder="website.com"
             />
-            <button onClick={createProject} disabled={busy || !websiteUrl.trim()}>
+            <button
+              onClick={createProject}
+              disabled={busy || !websiteUrl.trim()}
+            >
               {busy ? "Creating..." : "Analyze"}
             </button>
           </div>
@@ -171,20 +180,43 @@ function AgentBadge({ provider }: { provider: AgentProviderStatus | null | undef
 
 function ProjectView({ project }: { project: ProjectState }) {
   const [selectedDoc, setSelectedDoc] = React.useState<ContextDoc | null>(null);
+  const [onboardingStep, setOnboardingStep] = React.useState<
+    "analysis" | "channels"
+  >("analysis");
   const run = project.latestRun;
   const activity = project.runActivity.length
     ? project.runActivity
-    : [{ kind: "idle", title: "Waiting", message: "Analysis updates will appear here." }];
+    : [
+        {
+          kind: "idle",
+          title: "Waiting",
+          message: "Analysis updates will appear here.",
+        },
+      ];
   const isRunning = run?.status === "running";
-  const runLabel = project.docs.some(hasDocumentContent) ? "Writing..." : "Analyzing...";
+  const isAnalysisComplete =
+    !isRunning && project.docs.every(hasDocumentContent);
+  const runLabel = project.docs.some(hasDocumentContent)
+    ? "Writing..."
+    : "Analyzing...";
   const host = displayHost(project.config.websiteUrl);
   const productDescription = extractProductDescription(project.docs);
   const competitors = extractCompetitors(project.docs, host);
+  const channels = extractMarketingChannels(project.docs);
+
+  React.useEffect(() => {
+    setOnboardingStep("analysis");
+    setSelectedDoc(null);
+  }, [project.config.id]);
+
+  React.useEffect(() => {
+    window.scrollTo({ top: 0, left: 0 });
+  }, [onboardingStep]);
 
   return (
-    <section className="workspace">
+    <section className={`workspace workspace-${onboardingStep}`}>
       <div className="analysis-grid">
-        <aside className="panel documents-card">
+        <aside className="panel documents-card" aria-label="Company context">
           <div className="company-lockup">
             <UrlIcon websiteUrl={project.config.websiteUrl} />
             <div>
@@ -192,54 +224,66 @@ function ProjectView({ project }: { project: ProjectState }) {
             </div>
           </div>
 
-          <p className="product-description">{productDescription}</p>
+          <div
+            className="documents-body"
+            aria-hidden={onboardingStep === "channels"}
+          >
+            <p className="product-description">{productDescription}</p>
 
-          <div className="documents-section">
-            <p className="eyebrow">Documents</p>
-          </div>
-          <div className="document-list">
-            {project.docs.map((doc) => (
-              <button
-                className="document-row"
-                key={doc.key}
-                type="button"
-                onClick={() => setSelectedDoc(doc)}
-              >
-                <span className="document-icon" aria-hidden="true">
-                  <svg viewBox="0 0 16 16" focusable="false">
-                    <path d="M4 1.75h5.2L12.75 5.3v8.95H4z" />
-                    <path d="M9 1.9v3.6h3.55M6 8h4M6 10.5h4" />
-                  </svg>
-                </span>
-                <span>{doc.title}</span>
-                <span className="document-chevron" aria-hidden="true">›</span>
-              </button>
-            ))}
-          </div>
+            <div className="documents-section">
+              <p className="eyebrow">Documents</p>
+            </div>
+            <div className="document-list">
+              {project.docs.map((doc) => (
+                <button
+                  className="document-row"
+                  key={doc.key}
+                  type="button"
+                  onClick={() => setSelectedDoc(doc)}
+                >
+                  <span className="document-icon" aria-hidden="true">
+                    <svg viewBox="0 0 16 16" focusable="false">
+                      <path d="M4 1.75h5.2L12.75 5.3v8.95H4z" />
+                      <path d="M9 1.9v3.6h3.55M6 8h4M6 10.5h4" />
+                    </svg>
+                  </span>
+                  <span>{doc.title}</span>
+                  <span className="document-chevron" aria-hidden="true">
+                    ›
+                  </span>
+                </button>
+              ))}
+            </div>
 
-          <div className="competitors-section">
-            <p className="eyebrow">Competitors</p>
-            {competitors.length ? (
-              <div className="competitor-list">
-                {competitors.map((competitor) => (
-                  <button
-                    className="competitor-row"
-                    key={competitor.url}
-                    type="button"
-                    onClick={() => void api.openExternalUrl(competitor.url)}
-                  >
-                    <UrlIcon websiteUrl={competitor.url} />
-                    <span>{competitor.host}</span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="empty-note">Verified competitor links will appear here after analysis.</p>
-            )}
+            <div className="competitors-section">
+              <p className="eyebrow">Competitors</p>
+              {competitors.length ? (
+                <div className="competitor-list">
+                  {competitors.map((competitor) => (
+                    <button
+                      className="competitor-row"
+                      key={competitor.url}
+                      type="button"
+                      onClick={() => void api.openExternalUrl(competitor.url)}
+                    >
+                      <UrlIcon websiteUrl={competitor.url} />
+                      <span>{competitor.host}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-note">
+                  Verified competitor links will appear here after analysis.
+                </p>
+              )}
+            </div>
           </div>
         </aside>
 
-        <section className="panel activity-card">
+        <section
+          className="panel activity-card"
+          aria-hidden={onboardingStep === "channels"}
+        >
           <div className="activity-head">
             <h2>Brand Analysis</h2>
           </div>
@@ -253,15 +297,67 @@ function ProjectView({ project }: { project: ProjectState }) {
                 <p>{item.message}</p>
               </article>
             ))}
-            {isRunning ? <div className="analyzing-shimmer">{runLabel}</div> : null}
+            {isRunning ? (
+              <div className="analyzing-shimmer">{runLabel}</div>
+            ) : null}
           </div>
           {run?.error ? <p className="run-error">{run.error}</p> : null}
+          {isAnalysisComplete && !run?.error ? (
+            <div className="activity-actions">
+              <button
+                type="button"
+                onClick={() => setOnboardingStep("channels")}
+              >
+                Continue
+              </button>
+            </div>
+          ) : null}
+        </section>
+
+        <section
+          className="channel-setup"
+          aria-hidden={onboardingStep !== "channels"}
+          aria-label="Marketing channel setup"
+        >
+          <div className="channel-header">
+            <p className="eyebrow">Distribution setup</p>
+            <h2>Recommended marketing channels</h2>
+            <p>
+              Start with the channels that matched the strategy analysis.
+              Connect or configure each one before moving into recurring GTM
+              work.
+            </p>
+          </div>
+
+          <div className="channel-list">
+            {channels.map((channel) => (
+              <article className="channel-card" key={channel.id}>
+                <UrlIcon websiteUrl={channel.faviconUrl} />
+                <div>
+                  <div className="channel-card-head">
+                    <h3>{channel.name}</h3>
+                    <span>{channel.priority}</span>
+                  </div>
+                  <p>{channel.reason}</p>
+                </div>
+                <button className="secondary" type="button">
+                  Configure
+                </button>
+              </article>
+            ))}
+          </div>
         </section>
       </div>
 
       {selectedDoc ? (
-        <div className="doc-modal-backdrop" onClick={() => setSelectedDoc(null)}>
-          <article className="doc-modal" onClick={(event) => event.stopPropagation()}>
+        <div
+          className="doc-modal-backdrop"
+          onClick={() => setSelectedDoc(null)}
+        >
+          <article
+            className="doc-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
             <button
               className="modal-close"
               type="button"
@@ -280,7 +376,13 @@ function ProjectView({ project }: { project: ProjectState }) {
   );
 }
 
-function RenderedDoc({ content, full = false }: { content: string; full?: boolean }) {
+function RenderedDoc({
+  content,
+  full = false,
+}: {
+  content: string;
+  full?: boolean;
+}) {
   const blocks = markdownBlocks(content);
 
   return (
@@ -324,6 +426,49 @@ type Competitor = {
   url: string;
 };
 
+type MarketingChannel = {
+  id: string;
+  name: string;
+  faviconUrl: string;
+  priority: "Recommended" | "Optional" | "Not now";
+  reason: string;
+};
+
+const SUPPORTED_CHANNELS: MarketingChannel[] = [
+  {
+    id: "seo",
+    name: "SEO",
+    faviconUrl: "https://search.google.com/search-console",
+    priority: "Optional",
+    reason:
+      "Use search demand and website content when organic intent is visible.",
+  },
+  {
+    id: "x",
+    name: "X",
+    faviconUrl: "https://x.com",
+    priority: "Optional",
+    reason:
+      "Use founder-led posts and product narratives when the audience follows builders.",
+  },
+  {
+    id: "reddit",
+    name: "Reddit",
+    faviconUrl: "https://reddit.com",
+    priority: "Optional",
+    reason:
+      "Use community research and draft replies when niche problem discussions are active.",
+  },
+  {
+    id: "hacker-news",
+    name: "Hacker News",
+    faviconUrl: "https://news.ycombinator.com",
+    priority: "Optional",
+    reason:
+      "Use launches and technical discussion when the product has a founder or developer angle.",
+  },
+];
+
 function docByKey(docs: ContextDoc[], key: string) {
   const fileKey = key.replaceAll("_", "-");
   return docs.find((doc) => doc.key === key || doc.fileName.includes(fileKey));
@@ -351,14 +496,16 @@ function extractProductDescription(docs: ContextDoc[]) {
   const paragraph = markdownBlocks(doc.content).find((block) => {
     if (block.type !== "paragraph") return false;
     const text = block.text.toLowerCase();
-    const urlCount = (block.text.match(/https?:\/\/|\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b/gi) ?? []).length;
+    const urlCount = (
+      block.text.match(/https?:\/\/|\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b/gi) ?? []
+    ).length;
     return (
-      block.text.length > 60
-      && urlCount < 2
-      && !text.includes("status:")
-      && !text.includes("source url")
-      && !text.includes("urls checked")
-      && !text.includes("sources checked")
+      block.text.length > 60 &&
+      urlCount < 2 &&
+      !text.includes("status:") &&
+      !text.includes("source url") &&
+      !text.includes("urls checked") &&
+      !text.includes("sources checked")
     );
   });
 
@@ -383,7 +530,14 @@ function extractCompetitors(docs: ContextDoc[], ownHost: string) {
     if (!url) return;
     const host = displayHost(url);
     const key = host.toLowerCase();
-    if (!key || key.endsWith(".md") || key === own || key.endsWith(`.${own}`) || competitors.has(key)) return;
+    if (
+      !key ||
+      key.endsWith(".md") ||
+      key === own ||
+      key.endsWith(`.${own}`) ||
+      competitors.has(key)
+    )
+      return;
     competitors.set(key, { host, url });
   }
 
@@ -404,6 +558,105 @@ function extractCompetitors(docs: ContextDoc[], ownHost: string) {
   }
 
   return Array.from(competitors.values()).slice(0, 6);
+}
+
+function extractMarketingChannels(docs: ContextDoc[]) {
+  const doc = docByKey(docs, "marketing_strategy");
+  if (!doc || !hasDocumentContent(doc)) return SUPPORTED_CHANNELS;
+
+  const content = doc.content.toLowerCase();
+  const detected = SUPPORTED_CHANNELS.map((channel) => {
+    const score = channelKeywordScore(channel.id, content);
+    const priority = extractChannelPriority(channel, doc.content);
+    return {
+      ...channel,
+      priority:
+        priority ?? (score > 0 ? ("Recommended" as const) : channel.priority),
+      reason: score > 0 ? recommendedChannelReason(channel.id) : channel.reason,
+      score,
+    };
+  })
+    .filter((channel) => channel.score > 0 && channel.priority !== "Not now")
+    .sort((a, b) => b.score - a.score);
+
+  return detected.length
+    ? detected.map(({ score: _, ...channel }) => channel)
+    : SUPPORTED_CHANNELS;
+}
+
+function extractChannelPriority(channel: MarketingChannel, content: string) {
+  const headingNames: Record<string, string[]> = {
+    seo: ["seo"],
+    x: ["x", "twitter"],
+    reddit: ["reddit"],
+    "hacker-news": ["hacker news", "hn"],
+  };
+  const names = headingNames[channel.id] ?? [channel.name.toLowerCase()];
+  const lines = content.split(/\r?\n/);
+  const headingIndex = lines.findIndex((line) => {
+    const normalized = cleanInline(line)
+      .replace(/^#+\s*/, "")
+      .trim()
+      .toLowerCase();
+    return names.some(
+      (name) => normalized === name || normalized.startsWith(`${name} `),
+    );
+  });
+  if (headingIndex === -1) return null;
+
+  const section = lines
+    .slice(headingIndex + 1, headingIndex + 8)
+    .join("\n")
+    .toLowerCase();
+  if (section.includes("priority: not now")) return "Not now" as const;
+  if (section.includes("priority: optional")) return "Optional" as const;
+  if (section.includes("priority: recommended")) return "Recommended" as const;
+  return null;
+}
+
+function channelKeywordScore(channelId: string, content: string) {
+  const patterns: Record<string, RegExp[]> = {
+    seo: [
+      /\bseo\b/g,
+      /\bsearch\b/g,
+      /\borganic\b/g,
+      /\bkeyword\b/g,
+      /\bcontent\b/g,
+      /\bgoogle\b/g,
+    ],
+    x: [
+      /(^|\s)x(\s|$|[.,;:])/g,
+      /\btwitter\b/g,
+      /\bfounder-led\b/g,
+      /\bfounder led\b/g,
+      /\bbuild in public\b/g,
+    ],
+    reddit: [/\breddit\b/g, /\bsubreddit\b/g, /\bcommunity\b/g],
+    "hacker-news": [
+      /\bhacker news\b/g,
+      /(^|\s)hn(\s|$|[.,;:])/g,
+      /\by combinator\b/g,
+      /\btechnical audience\b/g,
+    ],
+  };
+  return (patterns[channelId] ?? []).reduce(
+    (score, pattern) => score + (content.match(pattern)?.length ?? 0),
+    0,
+  );
+}
+
+function recommendedChannelReason(channelId: string) {
+  const reasons: Record<string, string> = {
+    seo: "The strategy points to search intent, website content, or category education as a useful acquisition path.",
+    x: "The strategy points to founder-led distribution, product narrative, or an audience that can be reached through short-form posts.",
+    reddit:
+      "The strategy points to niche communities where the problem can be researched and joined through careful draft-first replies.",
+    "hacker-news":
+      "The strategy points to a technical or founder audience where launches and product discussions can create early signal.",
+  };
+  return (
+    reasons[channelId] ?? "Recommended by the marketing strategy analysis."
+  );
 }
 
 function cleanCompetitorName(value: string) {
@@ -459,7 +712,10 @@ function markdownBlocks(content: string): MarkdownBlock[] {
       list = [];
     }
     if (orderedList.length) {
-      blocks.push({ type: "ordered-list", items: orderedList.map(cleanInline) });
+      blocks.push({
+        type: "ordered-list",
+        items: orderedList.map(cleanInline),
+      });
       orderedList = [];
     }
   }
@@ -502,7 +758,9 @@ function markdownBlocks(content: string): MarkdownBlock[] {
 
   flushParagraph();
   flushList();
-  return blocks.length ? blocks : [{ type: "paragraph", text: "No content yet." }];
+  return blocks.length
+    ? blocks
+    : [{ type: "paragraph", text: "No content yet." }];
 }
 
 function cleanInline(value: string) {
@@ -559,7 +817,10 @@ function displayHost(value: string) {
   try {
     return new URL(value).host.replace(/^www\./, "");
   } catch {
-    return value.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
+    return value
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .split("/")[0];
   }
 }
 
