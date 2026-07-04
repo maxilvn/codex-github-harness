@@ -164,6 +164,7 @@ function ProjectView({ project }: { project: ProjectState }) {
     ? project.runActivity
     : [{ kind: "idle", title: "Waiting", message: "Analysis updates will appear here." }];
   const isRunning = run?.status === "running";
+  const runLabel = project.docs.some(hasDocumentContent) ? "Writing..." : "Analyzing...";
   const host = displayHost(project.config.websiteUrl);
   const productDescription = extractProductDescription(project.docs);
   const competitors = extractCompetitors(project.docs, host);
@@ -236,7 +237,7 @@ function ProjectView({ project }: { project: ProjectState }) {
                 <p>{item.message}</p>
               </article>
             ))}
-            {isRunning ? <div className="analyzing-shimmer">Analyzing...</div> : null}
+            {isRunning ? <div className="analyzing-shimmer">{runLabel}</div> : null}
           </div>
           {run?.error ? <p className="run-error">{run.error}</p> : null}
         </section>
@@ -315,7 +316,11 @@ function docByKey(docs: ContextDoc[], key: string) {
 function shouldRunInitialAnalysis(project: ProjectState) {
   if (!project.latestRun) return true;
   if (project.latestRun.status === "failed") return true;
-  return project.docs.some((doc) => doc.content.trim() === `# ${doc.title}`);
+  return project.docs.some((doc) => !hasDocumentContent(doc));
+}
+
+function hasDocumentContent(doc: ContextDoc) {
+  return doc.content.trim() !== `# ${doc.title}`;
 }
 
 function extractProductDescription(docs: ContextDoc[]) {
