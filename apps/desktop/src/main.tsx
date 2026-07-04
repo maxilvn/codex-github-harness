@@ -315,7 +315,7 @@ function docByKey(docs: ContextDoc[], key: string) {
 function shouldRunInitialAnalysis(project: ProjectState) {
   if (!project.latestRun) return true;
   if (project.latestRun.status === "failed") return true;
-  return project.docs.some((doc) => doc.content.includes("_Status: pending Codex analysis_"));
+  return project.docs.some((doc) => doc.content.trim() === `# ${doc.title}`);
 }
 
 function extractProductDescription(docs: ContextDoc[]) {

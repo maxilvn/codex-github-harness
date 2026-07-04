@@ -733,10 +733,7 @@ fn write_workspace_files(project_path: &Path, config: &ProjectConfig) -> AppResu
         ),
     )?;
     for (_, file_name, title) in DOCS {
-        let body = format!(
-            "# {title}\n\n_Status: pending Codex analysis_\n\nSource URL: {}\n\n",
-            config.website_url
-        );
+        let body = format!("# {title}\n\n");
         fs::write(project_path.join(file_name), body)?;
     }
     append_event(
@@ -894,7 +891,7 @@ Work in this order:
 
 Save each file immediately after you finish that file, then append a progress event before moving to the next file. This lets the app show completed documents one by one.
 
-Write progress messages for the app user in a clean product-research tone. Do not mention local sessions, Codex internals, workspace mechanics, tools, priority instructions, or implementation details. Say what was learned or what is being researched next.
+Write progress messages for the app user in a clean product-research tone. Keep them short and non-technical: one or two sentences about what was learned or what is being researched next. Do not mention local sessions, Codex internals, workspace mechanics, tools, priority instructions, implementation details, file operations, placeholders, source files, event logs, JSONL, validation commands, or branch/git state.
 
 Keep the files concise but specific enough that future GTM tasks can use them as source context. Include uncertainty where evidence is weak. Do not create outreach drafts, schedules, plugins, or extra strategy files. Do not post publicly or send messages. Rewrite only the four requested Markdown files and append progress/completion events to `.gtm-agent/events.jsonl` as JSON lines with eventType, summary, payload, and createdAt.
 "#,
@@ -1203,6 +1200,9 @@ mod tests {
         assert!(project_path.join("AGENTS.md").exists());
         for (_, file_name, _) in DOCS {
             assert!(project_path.join(file_name).exists());
+            let content = fs::read_to_string(project_path.join(file_name)).unwrap();
+            assert!(!content.contains("pending Codex analysis"));
+            assert!(!content.contains("Source URL"));
         }
         assert!(project_path.join(".gtm-agent/events.jsonl").exists());
 
