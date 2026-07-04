@@ -291,9 +291,9 @@ input:focus {
 
 .company-lockup .url-icon img {
   display: block;
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
   transform: translateY(1px);
 }
 
