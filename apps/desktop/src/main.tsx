@@ -163,7 +163,7 @@ function ProjectView({
   const run = project.latestRun;
   const activity = project.runActivity.length
     ? project.runActivity
-    : [{ kind: "idle", title: "Waiting", message: "Codex activity will appear here." }];
+    : [{ kind: "idle", title: "Waiting", message: "Codex text output will appear here." }];
 
   return (
     <section className="workspace">
@@ -184,8 +184,8 @@ function ProjectView({
       <section className="panel activity-card">
         <div className="activity-head">
           <div>
-            <p className="eyebrow">Codex session</p>
-            <h3>{run?.status === "running" ? "Running analysis" : "Latest activity"}</h3>
+            <p className="eyebrow">Codex output</p>
+            <h3>{run?.status === "running" ? "Running analysis" : "Latest output"}</h3>
           </div>
           <span className={`status-pill ${run?.status ?? "idle"}`}>
             {run?.status ?? "idle"}

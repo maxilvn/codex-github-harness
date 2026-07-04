@@ -755,27 +755,6 @@ fn read_run_activity(log_path: &Path) -> AppResult<Vec<RunActivity>> {
         };
         let method = value.get("method").and_then(Value::as_str);
         match method {
-            Some("thread/started") => activity.push(RunActivity {
-                kind: "thread".into(),
-                title: "Codex thread".into(),
-                message: "Session created in Codex Desktop.".into(),
-            }),
-            Some("item/started") => {
-                if value.pointer("/params/item/type").and_then(Value::as_str)
-                    == Some("commandExecution")
-                {
-                    if let Some(command) = value
-                        .pointer("/params/item/command")
-                        .and_then(Value::as_str)
-                    {
-                        activity.push(RunActivity {
-                            kind: "command".into(),
-                            title: "Running command".into(),
-                            message: compact_text(command, 140),
-                        });
-                    }
-                }
-            }
             Some("item/agentMessage/delta") => {
                 if let (Some(item_id), Some(delta)) = (
                     value.pointer("/params/itemId").and_then(Value::as_str),
@@ -805,39 +784,8 @@ fn read_run_activity(log_path: &Path) -> AppResult<Vec<RunActivity>> {
                         });
                     }
                 }
-                Some("commandExecution") => {
-                    let status = value
-                        .pointer("/params/item/status")
-                        .and_then(Value::as_str)
-                        .unwrap_or("completed");
-                    let command = value
-                        .pointer("/params/item/command")
-                        .and_then(Value::as_str)
-                        .unwrap_or("Command finished");
-                    activity.push(RunActivity {
-                        kind: "command".into(),
-                        title: format!("Command {status}"),
-                        message: compact_text(command, 140),
-                    });
-                }
                 _ => {}
             },
-            Some("turn/diff/updated") => activity.push(RunActivity {
-                kind: "files".into(),
-                title: "Files changed".into(),
-                message: "Codex wrote updates to the workspace.".into(),
-            }),
-            Some("turn/completed") => {
-                let status = value
-                    .pointer("/params/turn/status")
-                    .and_then(Value::as_str)
-                    .unwrap_or("completed");
-                activity.push(RunActivity {
-                    kind: "done".into(),
-                    title: "Turn finished".into(),
-                    message: format!("Codex turn {status}."),
-                });
-            }
             _ => {}
         }
     }
@@ -1106,6 +1054,17 @@ mod tests {
                     "method": "item/completed",
                     "params": {
                         "item": {
+                            "type": "commandExecution",
+                            "status": "completed",
+                            "command": "curl https://example.com"
+                        }
+                    }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
                             "type": "agentMessage",
                             "id": "msg_123",
                             "text": "I found the source material."
@@ -1124,10 +1083,9 @@ mod tests {
         .unwrap();
 
         let activity = read_run_activity(&log_path).unwrap();
-        assert_eq!(activity.len(), 3);
-        assert_eq!(activity[0].title, "Codex thread");
-        assert_eq!(activity[1].message, "I found the source material.");
-        assert_eq!(activity[2].message, "Codex turn completed.");
+        assert_eq!(activity.len(), 1);
+        assert_eq!(activity[0].title, "Codex");
+        assert_eq!(activity[0].message, "I found the source material.");
 
         fs::remove_file(log_path).unwrap();
     }
