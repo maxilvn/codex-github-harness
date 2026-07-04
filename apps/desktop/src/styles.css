@@ -351,7 +351,7 @@ input:focus {
 }
 
 .workspace-channels .analysis-grid {
-  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-columns: 184px minmax(0, 1fr);
 }
 
 .workspace-company-open .analysis-grid {
@@ -510,10 +510,10 @@ code {
 }
 
 .workspace-channels .documents-card {
-  width: 220px;
-  height: 74px;
-  min-height: 74px;
-  padding: 14px;
+  width: 184px;
+  height: 58px;
+  min-height: 58px;
+  padding: 10px 12px;
   overflow: hidden;
   box-shadow: 0 8px 28px #0000000a;
 }
@@ -527,6 +527,7 @@ code {
 }
 
 .workspace-channels .documents-card .company-lockup {
+  align-items: center;
   padding: 0;
 }
 
@@ -534,11 +535,23 @@ code {
   padding: 0 10px;
 }
 
+.workspace-channels .documents-card .company-lockup .url-icon {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  box-shadow: 0 1px 2px #0000000d;
+}
+
+.workspace-channels .documents-card .company-lockup .url-icon img {
+  width: 24px;
+  height: 24px;
+}
+
 .workspace-channels .documents-card .company-lockup strong {
   overflow: hidden;
-  max-width: 134px;
-  font-size: 18px;
-  line-height: 28px;
+  max-width: 110px;
+  font-size: 16px;
+  line-height: 24px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -636,13 +649,18 @@ code {
 }
 
 .channel-card .url-icon {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
 }
 
 .channel-card .url-icon img {
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
 }
 
 .channel-card-head {
