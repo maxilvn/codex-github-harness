@@ -385,7 +385,6 @@ function ProjectView({
   const [isLoadingChromeProfiles, setIsLoadingChromeProfiles] =
     React.useState(false);
   const [channelError, setChannelError] = React.useState<string | null>(null);
-  const activityListRef = React.useRef<HTMLDivElement | null>(null);
   const run = project.latestRun;
   const isInitialAnalysisRun = run?.kind === "initial_analysis";
   const isInitialAnalysisRunning =
@@ -403,9 +402,6 @@ function ProjectView({
   const agentOutput = agentOutputActivity(activity);
   const isAnalysisComplete =
     !isInitialAnalysisRunning && project.docs.every(hasDocumentContent);
-  const runLabel = project.docs.some(hasDocumentContent)
-    ? "Writing..."
-    : "Analyzing...";
   const host = displayHost(project.config.websiteUrl);
   const productDescription = extractProductDescription(project.docs);
   const competitors = extractCompetitors(project.docs, host);
@@ -495,17 +491,11 @@ function ProjectView({
     setOnboardingStep(isAnalysisComplete ? "channels" : "analysis");
     setSelectedDoc(null);
     setIsCompanyPanelOpen(!isAnalysisComplete);
-  }, [isAnalysisComplete, project.config.id]);
+  }, [project.config.id]);
 
   React.useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
   }, [onboardingStep]);
-
-  React.useEffect(() => {
-    const list = activityListRef.current;
-    if (!list) return;
-    list.scrollTop = list.scrollHeight;
-  }, [agentOutput.length, agentOutput.at(-1)?.message, isInitialAnalysisRunning]);
 
   React.useEffect(() => {
     if (activeChannelId !== "x") {
@@ -631,48 +621,22 @@ function ProjectView({
           </div>
         </aside>
 
-        <section
-          className="panel activity-card"
-          aria-hidden={showChannels}
-        >
-          <div className="activity-head">
-            <h2>Codex Output</h2>
-          </div>
-          <div className="activity-list" ref={activityListRef}>
-            {agentOutput.map((item, index) => (
-              <article
-                className={`activity-item ${activityClass(item.kind)}`}
-                key={`${item.title}-${index}`}
-              >
-                <p>{item.message}</p>
-              </article>
-            ))}
-            {!agentOutput.length && !isInitialAnalysisRunning ? (
-              <article className="activity-item">
-                <p>Codex output will appear here during analysis.</p>
-              </article>
-            ) : null}
-          </div>
-          {isInitialAnalysisRunning ? (
-            <div className="activity-status">
-              <div className="analyzing-shimmer">{runLabel}</div>
-            </div>
-          ) : null}
-          {run?.error ? <p className="run-error">{run.error}</p> : null}
-          {isAnalysisComplete && !run?.error ? (
-            <div className="activity-actions">
-              <button
-                type="button"
-                onClick={() => {
-                  setOnboardingStep("channels");
-                  setIsCompanyPanelOpen(false);
-                }}
-              >
-                Continue
-              </button>
-            </div>
-          ) : null}
-        </section>
+        {!showChannels ? (
+          <AnalysisProgressCard
+            agentOutput={agentOutput}
+            channels={channels}
+            competitors={competitors}
+            docs={project.docs}
+            isComplete={isAnalysisComplete}
+            isRunning={isInitialAnalysisRunning}
+            productDescription={productDescription}
+            runError={run?.error ?? null}
+            onContinue={() => {
+              setOnboardingStep("channels");
+              setIsCompanyPanelOpen(false);
+            }}
+          />
+        ) : null}
 
         <section
           className="channel-setup"
@@ -855,6 +819,206 @@ function ProjectView({
       ) : null}
     </section>
   );
+}
+
+type AnalysisStepStatus = "done" | "active" | "pending";
+
+type AnalysisStep = {
+  title: string;
+  detail: string;
+  status: AnalysisStepStatus;
+};
+
+function AnalysisProgressCard({
+  agentOutput,
+  channels,
+  competitors,
+  docs,
+  isComplete,
+  isRunning,
+  productDescription,
+  runError,
+  onContinue,
+}: {
+  agentOutput: RunActivity[];
+  channels: MarketingChannel[];
+  competitors: Competitor[];
+  docs: ContextDoc[];
+  isComplete: boolean;
+  isRunning: boolean;
+  productDescription: string;
+  runError: string | null;
+  onContinue: () => void;
+}) {
+  const [isLogOpen, setIsLogOpen] = React.useState(false);
+  const logRef = React.useRef<HTMLDivElement | null>(null);
+  const steps = analysisSteps(docs, competitors, isRunning, isComplete);
+  const activeStep = steps.find((step) => step.status === "active");
+  const readyDocCount = docs.filter(hasDocumentContent).length;
+  const resultStats = [
+    { label: "Documents", value: `${readyDocCount}/${docs.length}` },
+    { label: "Competitors", value: String(competitors.length) },
+    { label: "Channels", value: String(channels.length) },
+  ];
+
+  React.useEffect(() => {
+    if (!isLogOpen || !logRef.current) return;
+    logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [isLogOpen, agentOutput.length, agentOutput.at(-1)?.message]);
+
+  return (
+    <section className="panel activity-card">
+      <div className="activity-head">
+        <div>
+          <p className="eyebrow">Brand workspace</p>
+          <h2>{isComplete ? "Brand analysis ready" : "Analyzing brand"}</h2>
+        </div>
+        <button
+          className="secondary agent-log-toggle"
+          type="button"
+          onClick={() => setIsLogOpen((open) => !open)}
+        >
+          {isLogOpen ? "Hide agent log" : "Show agent log"}
+        </button>
+      </div>
+
+      <div className="analysis-card-body">
+        <div className="analysis-summary">
+          <p>
+            {isComplete
+              ? "The source documents are ready. Review the brand context, then continue into channel setup."
+              : activeStep?.detail ??
+                "GTM Agent is preparing the source documents from the selected ACP agent."}
+          </p>
+        </div>
+
+        <div className="analysis-step-list" aria-label="Analysis progress">
+          {steps.map((step) => (
+            <div
+              className={`analysis-step is-${step.status}`}
+              key={step.title}
+            >
+              <span className="analysis-step-icon" aria-hidden="true" />
+              <div>
+                <strong>{step.title}</strong>
+                <p>{step.detail}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {isComplete && !runError ? (
+          <div className="analysis-result" aria-label="Analysis result">
+            <p>{productDescription}</p>
+            <div className="analysis-result-grid">
+              {resultStats.map((stat) => (
+                <div key={stat.label}>
+                  <strong>{stat.value}</strong>
+                  <span>{stat.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {isLogOpen ? (
+          <div className="agent-log-panel">
+            <div className="activity-list agent-log-list" ref={logRef}>
+              {agentOutput.length ? (
+                agentOutput.map((item, index) => (
+                  <article
+                    className={`activity-item ${activityClass(item.kind)}`}
+                    key={`${item.title}-${index}`}
+                  >
+                    <p>{item.message}</p>
+                  </article>
+                ))
+              ) : (
+                <article className="activity-item">
+                  <p>No visible agent messages yet.</p>
+                </article>
+              )}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {isRunning ? (
+        <div className="activity-status">
+          <div className="analyzing-shimmer">
+            {readyDocCount ? "Writing documents..." : "Analyzing website..."}
+          </div>
+        </div>
+      ) : null}
+      {runError ? <p className="run-error">{runError}</p> : null}
+      {isComplete && !runError ? (
+        <div className="activity-actions">
+          <button type="button" onClick={onContinue}>
+            Continue
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function analysisSteps(
+  docs: ContextDoc[],
+  competitors: Competitor[],
+  isRunning: boolean,
+  isComplete: boolean,
+): AnalysisStep[] {
+  const productDoc = docByKey(docs, "product_information");
+  const strategyDoc = docByKey(docs, "marketing_strategy");
+  const competitorsDoc = docByKey(docs, "competitor_analysis");
+  const brandDoc = docByKey(docs, "brand_voice");
+  const productDocReady = Boolean(productDoc && hasDocumentContent(productDoc));
+  const strategyDocReady = Boolean(
+    strategyDoc && hasDocumentContent(strategyDoc),
+  );
+  const competitorsDocReady = Boolean(
+    competitorsDoc && hasDocumentContent(competitorsDoc),
+  );
+  const brandDocReady = Boolean(brandDoc && hasDocumentContent(brandDoc));
+
+  const stepInputs = [
+    {
+      title: "Website review",
+      detail: "Reading the public website and extracting the core product context.",
+      done: productDocReady || isComplete,
+    },
+    {
+      title: "Positioning",
+      detail: "Turning the evidence into product positioning and brand voice.",
+      done: (productDocReady && brandDocReady) || isComplete,
+    },
+    {
+      title: "Market context",
+      detail: "Checking competitors and category alternatives before writing recommendations.",
+      done: competitorsDocReady || competitors.length > 0 || isComplete,
+    },
+    {
+      title: "Source documents",
+      detail: "Writing the GTM source documents used by the rest of the workspace.",
+      done:
+        isComplete ||
+        (productDocReady &&
+          strategyDocReady &&
+          competitorsDocReady &&
+          brandDocReady),
+    },
+  ];
+  let activeAssigned = false;
+  return stepInputs.map((step) => {
+    if (step.done) {
+      return { ...step, status: "done" };
+    }
+    if (isRunning && !activeAssigned) {
+      activeAssigned = true;
+      return { ...step, status: "active" };
+    }
+    return { ...step, status: "pending" };
+  });
 }
 
 function XChannelSetupPanel({
