@@ -156,6 +156,16 @@ struct ChannelSetup {
     files: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChromeProfile {
+    id: String,
+    name: String,
+    email: Option<String>,
+    account_name: Option<String>,
+    is_default: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum ChannelSetupStatus {
@@ -238,6 +248,7 @@ pub fn run() {
             load_project,
             run_initial_analysis,
             configure_channel,
+            list_chrome_profiles,
             verify_x_login,
             run_x_account_analysis,
             open_project_in_codex,
@@ -351,10 +362,15 @@ fn configure_channel(project_path: String, channel_id: String) -> AppResult<Proj
 }
 
 #[tauri::command]
-fn verify_x_login(project_path: String) -> AppResult<ProjectState> {
+fn list_chrome_profiles() -> AppResult<Vec<ChromeProfile>> {
+    read_chrome_profiles()
+}
+
+#[tauri::command]
+fn verify_x_login(project_path: String, profile_id: Option<String>) -> AppResult<ProjectState> {
     let path = PathBuf::from(project_path);
     write_x_channel_setup(&path)?;
-    let login = check_x_login_in_chrome()?;
+    let login = check_x_login_in_chrome(profile_id.as_deref())?;
     if login.is_verified {
         write_x_channel_status(
             &path,
@@ -554,8 +570,72 @@ fn open_chrome_url(url: String) -> AppResult<()> {
     Ok(())
 }
 
-fn check_x_login_in_chrome() -> AppResult<XLoginCheck> {
-    open_chrome_url("https://x.com/home".into())?;
+fn open_chrome_url_in_profile(url: &str, profile_id: Option<&str>) -> AppResult<()> {
+    let normalized = normalize_url(url)?;
+    if let Some(profile_id) = profile_id.filter(|value| !value.trim().is_empty()) {
+        Command::new("open")
+            .arg("-na")
+            .arg("Google Chrome")
+            .arg("--args")
+            .arg(format!("--profile-directory={profile_id}"))
+            .arg(normalized)
+            .spawn()
+            .map_err(|err| AppError::Open(err.to_string()))?;
+        return Ok(());
+    }
+    open_chrome_url(normalized)
+}
+
+fn read_chrome_profiles() -> AppResult<Vec<ChromeProfile>> {
+    let user_data_dir = dirs::home_dir()
+        .ok_or_else(|| AppError::Open("could not locate the home directory".into()))?
+        .join("Library/Application Support/Google/Chrome");
+    let local_state_path = user_data_dir.join("Local State");
+    if !local_state_path.exists() {
+        return Ok(Vec::new());
+    }
+    let local_state: Value = read_json(&local_state_path)?;
+    let Some(info_cache) = local_state
+        .get("profile")
+        .and_then(|profile| profile.get("info_cache"))
+        .and_then(Value::as_object)
+    else {
+        return Ok(Vec::new());
+    };
+
+    let mut profiles = info_cache
+        .iter()
+        .map(|(id, profile)| ChromeProfile {
+            id: id.clone(),
+            name: profile
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(id)
+                .to_string(),
+            email: profile
+                .get("user_name")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string),
+            account_name: profile
+                .get("gaia_name")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string),
+            is_default: id == "Default",
+        })
+        .collect::<Vec<_>>();
+    profiles.sort_by(|a, b| {
+        b.is_default
+            .cmp(&a.is_default)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    Ok(profiles)
+}
+
+fn check_x_login_in_chrome(profile_id: Option<&str>) -> AppResult<XLoginCheck> {
+    open_chrome_url_in_profile("https://x.com/home", profile_id)?;
     thread::sleep(std::time::Duration::from_millis(1600));
     let script = r#"
 tell application "Google Chrome"
@@ -1126,11 +1206,14 @@ fn read_channel_setups(project_path: &Path) -> Vec<ChannelSetup> {
     }
 
     let channel_status = read_x_channel_status(project_path);
-    let setup_status = match channel_status.analysis_status {
-        XAnalysisStatus::Running => ChannelSetupStatus::Analyzing,
-        XAnalysisStatus::Ready => ChannelSetupStatus::Ready,
-        XAnalysisStatus::Failed => ChannelSetupStatus::Failed,
-        XAnalysisStatus::NotStarted => ChannelSetupStatus::NeedsLogin,
+    let setup_status = match (
+        &channel_status.login_status,
+        &channel_status.analysis_status,
+    ) {
+        (XLoginStatus::Verified, XAnalysisStatus::Running) => ChannelSetupStatus::Analyzing,
+        (XLoginStatus::Verified, XAnalysisStatus::Ready) => ChannelSetupStatus::Ready,
+        (_, XAnalysisStatus::Failed) => ChannelSetupStatus::Failed,
+        _ => ChannelSetupStatus::NeedsLogin,
     };
     let files = ["profile.md", "rules.md", "examples.md", "voice.md"]
         .iter()

@@ -56,6 +56,14 @@ export interface ChannelSetup {
   files: string[];
 }
 
+export interface ChromeProfile {
+  id: string;
+  name: string;
+  email?: string | null;
+  accountName?: string | null;
+  isDefault: boolean;
+}
+
 export interface ProjectState {
   config: ProjectConfig;
   agentProvider: AgentProviderStatus;

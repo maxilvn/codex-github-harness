@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AgentProviderStatus, ProjectState, RunState } from "./types";
+import type {
+  AgentProviderStatus,
+  ChromeProfile,
+  ProjectState,
+  RunState,
+} from "./types";
 
 function hasTauriBridge() {
   return "__TAURI_INTERNALS__" in window;
@@ -51,8 +56,11 @@ export const api = {
   configureChannel(projectPath: string, channelId: string) {
     return call<ProjectState>("configure_channel", { projectPath, channelId });
   },
-  verifyXLogin(projectPath: string) {
-    return call<ProjectState>("verify_x_login", { projectPath });
+  listChromeProfiles() {
+    return call<ChromeProfile[]>("list_chrome_profiles");
+  },
+  verifyXLogin(projectPath: string, profileId?: string | null) {
+    return call<ProjectState>("verify_x_login", { projectPath, profileId });
   },
   runXAccountAnalysis(projectPath: string) {
     return call<RunState>("run_x_account_analysis", { projectPath });

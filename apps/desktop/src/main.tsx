@@ -5,6 +5,7 @@ import { api } from "./lib/api";
 import type {
   AgentProviderStatus,
   ChannelSetup,
+  ChromeProfile,
   ContextDoc,
   ProjectState,
   RunActivity,
@@ -209,6 +210,14 @@ function ProjectView({
   const [analyzingChannelId, setAnalyzingChannelId] = React.useState<
     string | null
   >(null);
+  const [chromeProfiles, setChromeProfiles] = React.useState<ChromeProfile[]>(
+    [],
+  );
+  const [selectedChromeProfileId, setSelectedChromeProfileId] = React.useState<
+    string | null
+  >(null);
+  const [isLoadingChromeProfiles, setIsLoadingChromeProfiles] =
+    React.useState(false);
   const [channelError, setChannelError] = React.useState<string | null>(null);
   const run = project.latestRun;
   const isInitialAnalysisRun = run?.kind === "initial_analysis";
@@ -283,7 +292,10 @@ function ProjectView({
     setChannelError(null);
     setCheckingChannelId("x");
     try {
-      const checkedProject = await api.verifyXLogin(project.config.path);
+      const checkedProject = await api.verifyXLogin(
+        project.config.path,
+        selectedChromeProfileId,
+      );
       onProjectUpdate(checkedProject);
       const xSetup = checkedProject.channelSetups.find(
         (setup) => setup.id === "x",
@@ -307,6 +319,41 @@ function ProjectView({
   React.useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
   }, [onboardingStep]);
+
+  React.useEffect(() => {
+    if (activeChannelId !== "x") {
+      return;
+    }
+    let isCancelled = false;
+    setIsLoadingChromeProfiles(true);
+    void api
+      .listChromeProfiles()
+      .then((profiles) => {
+        if (isCancelled) {
+          return;
+        }
+        setChromeProfiles(profiles);
+        setSelectedChromeProfileId((current) => {
+          if (current && profiles.some((profile) => profile.id === current)) {
+            return current;
+          }
+          return profiles[0]?.id ?? null;
+        });
+      })
+      .catch((err) => {
+        if (!isCancelled) {
+          setChannelError(String(err));
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsLoadingChromeProfiles(false);
+        }
+      });
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeChannelId]);
 
   const showChannels = onboardingStep === "channels";
   const showDashboard = onboardingStep === "dashboard";
@@ -507,6 +554,10 @@ function ProjectView({
                         isConfiguring={configuringChannelId === channel.id}
                         isChecking={checkingChannelId === channel.id}
                         isAnalyzing={analyzingChannelId === channel.id}
+                        chromeProfiles={chromeProfiles}
+                        selectedChromeProfileId={selectedChromeProfileId}
+                        isLoadingChromeProfiles={isLoadingChromeProfiles}
+                        onSelectChromeProfile={setSelectedChromeProfileId}
                         onVerify={() => void verifyXAccountInChrome()}
                         embedded
                       />
@@ -614,6 +665,10 @@ function XChannelSetupPanel({
   isConfiguring,
   isChecking,
   isAnalyzing,
+  chromeProfiles,
+  selectedChromeProfileId,
+  isLoadingChromeProfiles,
+  onSelectChromeProfile,
   onVerify,
   embedded = false,
 }: {
@@ -624,20 +679,43 @@ function XChannelSetupPanel({
   isConfiguring: boolean;
   isChecking: boolean;
   isAnalyzing: boolean;
+  chromeProfiles: ChromeProfile[];
+  selectedChromeProfileId: string | null;
+  isLoadingChromeProfiles: boolean;
+  onSelectChromeProfile: (profileId: string) => void;
   onVerify: () => void;
   embedded?: boolean;
 }) {
   const isReady = setup?.status === "ready";
+  const isVerified = setup?.loginStatus === "verified";
   const isRunActive =
-    isAnalyzing ||
-    run?.status === "running" ||
-    setup?.analysisStatus === "running";
+    isVerified &&
+    (isAnalyzing ||
+      run?.status === "running" ||
+      setup?.analysisStatus === "running");
   const isLoginActionBusy = isChecking || isRunActive || isConfiguring;
+  const selectedChromeProfile = chromeProfiles.find(
+    (profile) => profile.id === selectedChromeProfileId,
+  );
   const loginLabel =
-    setup?.accountLabel ??
-    (setup?.loginStatus === "verified"
-      ? "X account verified"
-      : "No X account verified yet");
+    setup?.loginStatus === "verified"
+      ? (setup.accountLabel ?? "X account verified")
+      : setup?.loginStatus === "needs_login"
+        ? "No signed-in X account found in this Chrome profile."
+        : "Choose the Chrome profile GTM Agent should check.";
+  const actionLabel = isChecking
+    ? "Checking..."
+    : isRunActive
+      ? "Analyzing..."
+      : setup?.loginStatus === "needs_login"
+        ? "Open X login"
+        : setup?.loginStatus === "verified"
+          ? isReady
+            ? "Ready"
+            : "Check again"
+          : "Check profile";
+  const shouldShowAnalysisOutput =
+    isVerified && (isRunActive || activity.length > 0 || isReady);
   return (
     <div
       className={
@@ -659,9 +737,41 @@ function XChannelSetupPanel({
       )}
 
       <div className="x-login-card">
-        <div>
-          <strong>Use existing Chrome login</strong>
+        <div className="x-login-copy">
+          <strong>Chrome profile for X</strong>
           <p>{loginLabel}</p>
+          <div className="x-profile-list" aria-label="Chrome profiles">
+            {isLoadingChromeProfiles ? (
+              <span>Loading Chrome profiles...</span>
+            ) : chromeProfiles.length ? (
+              chromeProfiles.map((profile) => (
+                <button
+                  className={
+                    profile.id === selectedChromeProfileId ? "is-selected" : ""
+                  }
+                  key={profile.id}
+                  type="button"
+                  onClick={() => onSelectChromeProfile(profile.id)}
+                  disabled={isLoginActionBusy}
+                >
+                  <strong>{profile.name}</strong>
+                  <span>
+                    {profile.email ??
+                      profile.accountName ??
+                      (profile.isDefault ? "Default profile" : profile.id)}
+                  </span>
+                </button>
+              ))
+            ) : (
+              <span>Current Chrome window</span>
+            )}
+          </div>
+          {selectedChromeProfile ? (
+            <p className="x-profile-note">
+              GTM Agent will open X in {selectedChromeProfile.name} and check
+              whether that browser profile already has an X session.
+            </p>
+          ) : null}
         </div>
         <button
           className="secondary"
@@ -669,17 +779,11 @@ function XChannelSetupPanel({
           onClick={onVerify}
           disabled={isLoginActionBusy}
         >
-          {isChecking
-            ? "Checking login..."
-            : isRunActive
-              ? "Analyzing account..."
-              : setup?.loginStatus === "needs_login"
-                ? "Open X login"
-                : "Verify in Chrome"}
+          {actionLabel}
         </button>
       </div>
 
-      {isRunActive || activity.length > 0 ? (
+      {shouldShowAnalysisOutput ? (
         <div className="x-codex-card">
           <div className="x-codex-output">
             {activity.length ? (
