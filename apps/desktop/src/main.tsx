@@ -200,9 +200,6 @@ function ProjectView({
   const [activeChannelId, setActiveChannelId] = React.useState<string | null>(
     null,
   );
-  const [openingChannelId, setOpeningChannelId] = React.useState<string | null>(
-    null,
-  );
   const [configuringChannelId, setConfiguringChannelId] = React.useState<
     string | null
   >(null);
@@ -257,11 +254,7 @@ function ProjectView({
       setChannelError(`${channelName(channelId)} setup is coming next.`);
       return;
     }
-    setOpeningChannelId(channelId);
-    window.setTimeout(() => {
-      setActiveChannelId(channelId);
-      setOpeningChannelId(null);
-    }, 360);
+    setActiveChannelId(channelId);
     setConfiguringChannelId(channelId);
     try {
       const next = await api.configureChannel(project.config.path, channelId);
@@ -440,12 +433,7 @@ function ProjectView({
         </section>
 
         <section
-          className={[
-            "channel-setup",
-            openingChannelId ? "channel-setup-opening" : "",
-          ]
-            .filter(Boolean)
-            .join(" ")}
+          className="channel-setup"
           aria-hidden={!showChannels || showDashboard}
           aria-label="Marketing channel setup"
         >
@@ -465,16 +453,16 @@ function ProjectView({
             </p>
           </div>
 
-          {showChannelDetail ? null : (
-            <div className="channel-list">
-              {channels.map((channel) => (
+          <div className="channel-list">
+            {channels
+              .filter((channel) => !showChannelDetail || channel.id === "x")
+              .map((channel) => (
                 <article
                   className={[
                     "channel-card",
                     `channel-card-${channel.id}`,
-                    openingChannelId === channel.id ? "is-opening" : "",
-                    openingChannelId && openingChannelId !== channel.id
-                      ? "is-moving-away"
+                    showChannelDetail && channel.id === "x"
+                      ? "is-expanded"
                       : "",
                   ]
                     .filter(Boolean)
@@ -497,40 +485,39 @@ function ProjectView({
                     className="secondary"
                     type="button"
                     onClick={() => void configureChannel(channel.id)}
-                    disabled={
-                      configuringChannelId === channel.id ||
-                      openingChannelId === channel.id
-                    }
+                    disabled={configuringChannelId === channel.id}
                   >
-                    {configuringChannelId === channel.id ||
-                    openingChannelId === channel.id
+                    {configuringChannelId === channel.id
                       ? "Setting up..."
                       : channelSetups.get(channel.id)?.status === "ready"
                         ? "Open"
                         : "Configure"}
                   </button>
+                  {showChannelDetail && channel.id === "x" ? (
+                    <div className="channel-card-expansion">
+                      <XChannelSetupPanel
+                        channel={activeChannel ?? channel}
+                        setup={activeChannelSetup}
+                        run={run?.kind === "x_account_analysis" ? run : null}
+                        activity={
+                          run?.kind === "x_account_analysis"
+                            ? project.runActivity
+                            : []
+                        }
+                        isConfiguring={configuringChannelId === channel.id}
+                        isChecking={checkingChannelId === channel.id}
+                        isAnalyzing={analyzingChannelId === channel.id}
+                        onVerify={() => void verifyXAccountInChrome()}
+                        embedded
+                      />
+                    </div>
+                  ) : null}
                 </article>
               ))}
-            </div>
-          )}
+          </div>
 
           {channelError ? (
             <p className="channel-error">{channelError}</p>
-          ) : null}
-
-          {activeChannel?.id === "x" ? (
-            <XChannelSetupPanel
-              channel={activeChannel}
-              setup={activeChannelSetup}
-              run={run?.kind === "x_account_analysis" ? run : null}
-              activity={
-                run?.kind === "x_account_analysis" ? project.runActivity : []
-              }
-              isConfiguring={configuringChannelId === activeChannel.id}
-              isChecking={checkingChannelId === activeChannel.id}
-              isAnalyzing={analyzingChannelId === activeChannel.id}
-              onVerify={() => void verifyXAccountInChrome()}
-            />
           ) : null}
 
           <div
@@ -628,6 +615,7 @@ function XChannelSetupPanel({
   isChecking,
   isAnalyzing,
   onVerify,
+  embedded = false,
 }: {
   channel: MarketingChannel;
   setup: ChannelSetup | null;
@@ -637,6 +625,7 @@ function XChannelSetupPanel({
   isChecking: boolean;
   isAnalyzing: boolean;
   onVerify: () => void;
+  embedded?: boolean;
 }) {
   const isReady = setup?.status === "ready";
   const isRunActive =
@@ -650,17 +639,24 @@ function XChannelSetupPanel({
       ? "X account verified"
       : "No X account verified yet");
   return (
-    <article className="x-setup-panel" aria-label="X channel setup">
-      <div className="x-setup-head">
-        <UrlIcon websiteUrl={channel.faviconUrl} />
-        <div>
-          <p className="eyebrow">X setup</p>
-          <h3>Draft-first outreach through Chrome</h3>
+    <div
+      className={
+        embedded ? "x-setup-panel x-setup-panel-embedded" : "x-setup-panel"
+      }
+      aria-label="X channel setup"
+    >
+      {embedded ? null : (
+        <div className="x-setup-head">
+          <UrlIcon websiteUrl={channel.faviconUrl} />
+          <div>
+            <p className="eyebrow">X setup</p>
+            <h3>Draft-first outreach through Chrome</h3>
+          </div>
+          <span>
+            {isReady ? "Ready" : isConfiguring ? "Creating" : "Not set up"}
+          </span>
         </div>
-        <span>
-          {isReady ? "Ready" : isConfiguring ? "Creating" : "Not set up"}
-        </span>
-      </div>
+      )}
 
       <div className="x-login-card">
         <div>
@@ -710,29 +706,31 @@ function XChannelSetupPanel({
         </div>
       ) : null}
 
-      <div className="x-setup-steps">
-        <SetupStep
-          title="Learn account voice"
-          description="Profile, recent posts, replies, strong examples, and avoid patterns become channel memory."
-          status={
-            setup?.analysisStatus === "running"
-              ? "Running"
-              : isReady
-                ? "Ready"
-                : "Next"
-          }
-        />
-        <SetupStep
-          title="Create daily draft queue"
-          description="Codex stores each source post link with a matching reply draft, risk notes, and review status."
-          status={isReady ? "Ready" : "Planned"}
-        />
-        <SetupStep
-          title="Prepare reply in Chrome"
-          description="Approved drafts can later open the source post and paste the reply so the user only has to review and send."
-          status={isReady ? "Next" : "Planned"}
-        />
-      </div>
+      {embedded ? null : (
+        <div className="x-setup-steps">
+          <SetupStep
+            title="Learn account voice"
+            description="Profile, recent posts, replies, strong examples, and avoid patterns become channel memory."
+            status={
+              setup?.analysisStatus === "running"
+                ? "Running"
+                : isReady
+                  ? "Ready"
+                  : "Next"
+            }
+          />
+          <SetupStep
+            title="Create daily draft queue"
+            description="Codex stores each source post link with a matching reply draft, risk notes, and review status."
+            status={isReady ? "Ready" : "Planned"}
+          />
+          <SetupStep
+            title="Prepare reply in Chrome"
+            description="Approved drafts can later open the source post and paste the reply so the user only has to review and send."
+            status={isReady ? "Next" : "Planned"}
+          />
+        </div>
+      )}
 
       {isReady ? (
         <div className="x-setup-files">
@@ -744,7 +742,7 @@ function XChannelSetupPanel({
           </div>
         </div>
       ) : null}
-    </article>
+    </div>
   );
 }
 

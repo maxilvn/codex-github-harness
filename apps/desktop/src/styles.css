@@ -674,38 +674,14 @@ code {
   border-radius: 8px;
   padding: 14px;
   background: #ffffff;
-  transform: translateY(0) scale(1);
-  will-change: transform, opacity;
   transition:
-    opacity 260ms ease,
-    transform 420ms var(--channel-motion-ease),
     border-color 260ms ease,
-    box-shadow 420ms var(--channel-motion-ease);
+    box-shadow 260ms ease;
 }
 
-.channel-card.is-opening {
-  z-index: 1;
-  border-color: #d4d4d4;
-  box-shadow: 0 18px 48px #00000012;
-  transform: translateY(-6px) scale(1.018);
-}
-
-.channel-card.is-moving-away {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(24px) scale(0.982);
-}
-
-.channel-card-reddit.is-moving-away {
-  transition-delay: 30ms;
-}
-
-.channel-card-hacker-news.is-moving-away {
-  transition-delay: 60ms;
-}
-
-.channel-card-seo.is-moving-away {
-  transition-delay: 90ms;
+.channel-card.is-expanded {
+  align-items: start;
+  min-height: 0;
 }
 
 .channel-card .url-icon {
@@ -756,6 +732,13 @@ code {
   line-height: 20px;
 }
 
+.channel-card-expansion {
+  grid-column: 1 / -1;
+  max-height: 720px;
+  overflow: hidden;
+  animation: channel-card-expand 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 .channel-error {
   margin: -8px 0 0;
   color: #b00020;
@@ -791,7 +774,52 @@ code {
   border-radius: 8px;
   padding: 18px;
   background: #ffffff;
-  animation: channel-detail-in 520ms cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+  transform-origin: top center;
+  animation: channel-detail-expand 560ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: clip-path, transform, opacity;
+}
+
+.x-setup-panel-embedded {
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  padding: 12px 0 0;
+  animation: none;
+  will-change: auto;
+}
+
+.x-setup-panel-embedded .x-login-card {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.x-setup-panel > * {
+  animation: channel-detail-content-in 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.x-setup-panel-embedded > * {
+  animation: none;
+}
+
+.x-setup-panel > *:nth-child(1) {
+  animation-delay: 80ms;
+}
+
+.x-setup-panel > *:nth-child(2) {
+  animation-delay: 120ms;
+}
+
+.x-setup-panel > *:nth-child(3) {
+  animation-delay: 155ms;
+}
+
+.x-setup-panel > *:nth-child(4) {
+  animation-delay: 190ms;
+}
+
+.x-setup-panel > *:nth-child(5) {
+  animation-delay: 225ms;
 }
 
 .x-setup-head {
@@ -1001,15 +1029,45 @@ code {
   line-height: 20px;
 }
 
-@keyframes channel-detail-in {
+@keyframes channel-card-expand {
   from {
-    opacity: 0;
-    transform: translateY(18px) scale(0.982);
+    max-height: 0;
+  }
+
+  to {
+    max-height: 720px;
+  }
+}
+
+@keyframes channel-detail-expand {
+  from {
+    opacity: 0.98;
+    clip-path: inset(0 0 calc(100% - 82px) 0 round 8px);
+    transform: translateY(-8px);
+  }
+
+  62% {
+    opacity: 1;
+    clip-path: inset(0 0 12% 0 round 8px);
+    transform: translateY(-2px);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    clip-path: inset(0 0 0 0 round 8px);
+    transform: translateY(0);
+  }
+}
+
+@keyframes channel-detail-content-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
