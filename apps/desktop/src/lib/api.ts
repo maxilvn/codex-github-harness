@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CodexDetection, ProjectState, RunState } from "./types";
+import type { AgentProviderStatus, ProjectState, RunState } from "./types";
 
 function hasTauriBridge() {
   return "__TAURI_INTERNALS__" in window;
@@ -13,14 +13,18 @@ function call<T>(command: string, args?: Record<string, unknown>) {
 }
 
 export const api = {
-  detectCodex() {
+  detectAgentProvider() {
     if (!hasTauriBridge()) {
-      return Promise.resolve<CodexDetection>({
+      return Promise.resolve<AgentProviderStatus>({
+        id: "desktop",
+        title: "Agent",
+        command: "",
+        args: [],
         available: false,
-        error: "Open the desktop app to use Codex.",
+        error: "Open the desktop app to use an agent.",
       });
     }
-    return call<CodexDetection>("detect_codex");
+    return call<AgentProviderStatus>("detect_agent_provider");
   },
   defaultProjectPath(websiteUrl: string) {
     return call<string>("default_project_path", { websiteUrl });
