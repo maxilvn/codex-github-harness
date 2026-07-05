@@ -23,8 +23,14 @@ const logoBlack = new URL(
 function App() {
   const [agentProvider, setAgentProvider] =
     React.useState<AgentProviderStatus | null>(null);
+  const [agentProviders, setAgentProviders] = React.useState<
+    AgentProviderStatus[]
+  >([]);
   const [project, setProject] = React.useState<ProjectState | null>(null);
   const [websiteUrl, setWebsiteUrl] = React.useState("");
+  const [onboardingStep, setOnboardingStep] = React.useState<"url" | "agent">(
+    "url",
+  );
   const [busy, setBusy] = React.useState(false);
   const [restoring, setRestoring] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -44,10 +50,23 @@ function App() {
           title: "Agent",
           command: "",
           args: [],
+          enabled: false,
+          selected: false,
           available: false,
           error: String(err),
         });
       });
+    api
+      .listAgentProviders()
+      .then((providers) => {
+        setAgentProviders(providers);
+        setAgentProvider(
+          providers.find((provider) => provider.selected) ??
+            providers[0] ??
+            null,
+        );
+      })
+      .catch(() => undefined);
     let cancelled = false;
     api
       .loadLastProject()
@@ -82,10 +101,18 @@ function App() {
     };
   }, [project, refreshProject]);
 
-  async function createProject() {
+  async function continueToAgentSelection() {
+    if (!websiteUrl.trim()) return;
+    setError(null);
+    setOnboardingStep("agent");
+  }
+
+  async function createProject(providerId = "codex") {
     setBusy(true);
     setError(null);
     try {
+      const selected = await api.selectAgentProvider(providerId);
+      setAgentProvider(selected);
       const next = await api.createProject(websiteUrl);
       setProject(next);
       if (shouldRunInitialAnalysis(next)) {
@@ -107,13 +134,12 @@ function App() {
             <BrandMark />
             <span>GTM Agent</span>
           </div>
-          <AgentBadge provider={agentProvider} />
         </section>
       ) : null}
 
       {error ? <div className="error">{error}</div> : null}
 
-      {!project && !restoring ? (
+      {!project && !restoring && onboardingStep === "url" ? (
         <section className="onboarding">
           <div className="onboarding-copy">
             <p className="eyebrow">Brand workspace</p>
@@ -126,18 +152,31 @@ function App() {
               value={websiteUrl}
               onChange={(event) => setWebsiteUrl(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && !busy) void createProject();
+                if (event.key === "Enter" && !busy)
+                  void continueToAgentSelection();
               }}
               placeholder="website.com"
             />
             <button
-              onClick={createProject}
+              onClick={continueToAgentSelection}
               disabled={busy || !websiteUrl.trim()}
             >
-              {busy ? "Creating..." : "Analyze"}
+              Analyze
             </button>
           </div>
         </section>
+      ) : !project && !restoring && onboardingStep === "agent" ? (
+        <AgentSelectionStep
+          providers={agentProviders}
+          selectedProvider={agentProvider}
+          websiteUrl={websiteUrl}
+          busy={busy}
+          onBack={() => setOnboardingStep("url")}
+          onUnavailable={(title) =>
+            setError(`${title} is not available yet. Use Codex for now.`)
+          }
+          onSelect={(providerId) => void createProject(providerId)}
+        />
       ) : project ? (
         <ProjectView project={project} onProjectUpdate={setProject} />
       ) : null}
@@ -182,23 +221,123 @@ function UrlIcon({ websiteUrl }: { websiteUrl: string }) {
   );
 }
 
-function AgentBadge({
-  provider,
+function AgentSelectionStep({
+  providers,
+  selectedProvider,
+  websiteUrl,
+  busy,
+  onBack,
+  onSelect,
+  onUnavailable,
 }: {
-  provider: AgentProviderStatus | null | undefined;
+  providers: AgentProviderStatus[];
+  selectedProvider: AgentProviderStatus | null;
+  websiteUrl: string;
+  busy: boolean;
+  onBack: () => void;
+  onSelect: (providerId: string) => void;
+  onUnavailable: (title: string) => void;
 }) {
-  if (!provider) return <div className="badge neutral">Checking agent</div>;
+  const providerIds = new Set(providers.map((provider) => provider.id));
+  const providerOptions = AGENT_PROVIDER_OPTIONS.filter(
+    (option) => option.id === "codex" || providerIds.has(option.id),
+  );
+
   return (
-    <div className={provider.available ? "badge success" : "badge danger"}>
-      <strong>{provider.available ? "Agent ready" : "Agent missing"}</strong>
-      <span>
-        {provider.available
-          ? provider.title
-          : provider.error || "No agent found"}
-      </span>
-    </div>
+    <section className="agent-onboarding">
+      <div className="onboarding-copy">
+        <p className="eyebrow">Agent provider</p>
+        <h1>Select your agent</h1>
+        <p className="agent-onboarding-subtitle">
+          {displayHost(websiteUrl)} will be analyzed through the selected ACP
+          provider.
+        </p>
+      </div>
+
+      <div className="agent-provider-grid">
+        {providerOptions.map((option) => {
+          const isCodex = option.id === "codex";
+          const isSelected =
+            selectedProvider?.id === option.id || (!selectedProvider && isCodex);
+          return (
+            <button
+              className={[
+                "agent-provider-card",
+                isSelected ? "is-selected" : "",
+                !isCodex ? "is-disabled" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              key={option.id}
+              type="button"
+              onClick={() =>
+                isCodex ? onSelect(option.id) : onUnavailable(option.title)
+              }
+              disabled={busy}
+            >
+              <span className={`agent-provider-icon icon-${option.id}`}>
+                {option.icon}
+              </span>
+              <span>
+                <strong>{option.title}</strong>
+                <em>{isCodex ? "Available now" : "Not available yet"}</em>
+              </span>
+              <small>{option.caption}</small>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="agent-onboarding-actions">
+        <button className="secondary" type="button" onClick={onBack}>
+          Back
+        </button>
+        <button type="button" onClick={() => onSelect("codex")} disabled={busy}>
+          {busy ? "Starting..." : "Use Codex"}
+        </button>
+      </div>
+    </section>
   );
 }
+
+const AGENT_PROVIDER_OPTIONS = [
+  {
+    id: "codex",
+    title: "Codex",
+    icon: "⌁",
+    caption: "OpenAI Codex through ACP",
+  },
+  {
+    id: "claude",
+    title: "Claude Code",
+    icon: "CC",
+    caption: "ACP adapter planned",
+  },
+  {
+    id: "cursor",
+    title: "Cursor",
+    icon: "⌘",
+    caption: "Cursor agent ACP",
+  },
+  {
+    id: "devin",
+    title: "Devin",
+    icon: "D",
+    caption: "ACP provider planned",
+  },
+  {
+    id: "gemini",
+    title: "Gemini",
+    icon: "G",
+    caption: "Gemini ACP mode",
+  },
+  {
+    id: "copilot",
+    title: "Copilot",
+    icon: "CP",
+    caption: "Copilot ACP mode",
+  },
+];
 
 function ProjectView({
   project,

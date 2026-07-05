@@ -27,11 +27,83 @@ export const api = {
         title: "Agent",
         command: "",
         args: [],
+        enabled: false,
+        selected: false,
         available: false,
         error: "Open the desktop app to use an agent.",
       });
     }
     return call<AgentProviderStatus>("detect_agent_provider");
+  },
+  listAgentProviders() {
+    if (!hasTauriBridge()) {
+      return Promise.resolve<AgentProviderStatus[]>([
+        {
+          id: "codex",
+          title: "Codex",
+          command: "npx",
+          args: ["-y", "@agentclientprotocol/codex-acp"],
+          enabled: true,
+          selected: true,
+          available: false,
+          error: "Open the desktop app to use an agent.",
+        },
+        {
+          id: "claude",
+          title: "Claude Code",
+          command: "npx",
+          args: ["-y", "@agentclientprotocol/claude-agent-acp"],
+          enabled: true,
+          selected: false,
+          available: false,
+          error: "Open the desktop app to use an agent.",
+        },
+        {
+          id: "cursor",
+          title: "Cursor",
+          command: "cursor-agent",
+          args: ["acp"],
+          enabled: true,
+          selected: false,
+          available: false,
+          error: "Open the desktop app to use an agent.",
+        },
+        {
+          id: "devin",
+          title: "Devin",
+          command: "devin",
+          args: ["acp"],
+          enabled: true,
+          selected: false,
+          available: false,
+          error: "Open the desktop app to use an agent.",
+        },
+        {
+          id: "gemini",
+          title: "Gemini",
+          command: "gemini",
+          args: ["--acp"],
+          enabled: true,
+          selected: false,
+          available: false,
+          error: "Open the desktop app to use an agent.",
+        },
+        {
+          id: "copilot",
+          title: "Copilot",
+          command: "copilot",
+          args: ["--acp", "--stdio"],
+          enabled: true,
+          selected: false,
+          available: false,
+          error: "Open the desktop app to use an agent.",
+        },
+      ]);
+    }
+    return call<AgentProviderStatus[]>("list_agent_providers");
+  },
+  selectAgentProvider(providerId: string) {
+    return call<AgentProviderStatus>("select_agent_provider", { providerId });
   },
   defaultProjectPath(websiteUrl: string) {
     return call<string>("default_project_path", { websiteUrl });
