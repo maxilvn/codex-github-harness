@@ -20,7 +20,8 @@ const logoBlack = new URL(
 ).href;
 
 function App() {
-  const [agentProvider, setAgentProvider] = React.useState<AgentProviderStatus | null>(null);
+  const [agentProvider, setAgentProvider] =
+    React.useState<AgentProviderStatus | null>(null);
   const [project, setProject] = React.useState<ProjectState | null>(null);
   const [websiteUrl, setWebsiteUrl] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -33,16 +34,19 @@ function App() {
   }, [project]);
 
   React.useEffect(() => {
-    api.detectAgentProvider().then(setAgentProvider).catch((err) => {
-      setAgentProvider({
-        id: "agent",
-        title: "Agent",
-        command: "",
-        args: [],
-        available: false,
-        error: String(err),
+    api
+      .detectAgentProvider()
+      .then(setAgentProvider)
+      .catch((err) => {
+        setAgentProvider({
+          id: "agent",
+          title: "Agent",
+          command: "",
+          args: [],
+          available: false,
+          error: String(err),
+        });
       });
-    });
     let cancelled = false;
     api
       .loadLastProject()
@@ -177,12 +181,20 @@ function UrlIcon({ websiteUrl }: { websiteUrl: string }) {
   );
 }
 
-function AgentBadge({ provider }: { provider: AgentProviderStatus | null | undefined }) {
+function AgentBadge({
+  provider,
+}: {
+  provider: AgentProviderStatus | null | undefined;
+}) {
   if (!provider) return <div className="badge neutral">Checking agent</div>;
   return (
     <div className={provider.available ? "badge success" : "badge danger"}>
       <strong>{provider.available ? "Agent ready" : "Agent missing"}</strong>
-      <span>{provider.available ? provider.title : provider.error || "No agent found"}</span>
+      <span>
+        {provider.available
+          ? provider.title
+          : provider.error || "No agent found"}
+      </span>
     </div>
   );
 }

@@ -308,6 +308,11 @@ fn detect_agent_provider() -> AppResult<AgentProviderStatus> {
 }
 
 #[tauri::command]
+fn detect_agent_provider() -> AppResult<AgentProviderStatus> {
+    selected_provider_status()
+}
+
+#[tauri::command]
 fn default_project_path(website_url: String) -> AppResult<String> {
     let url = normalize_url(&website_url)?;
     Ok(projects_root()?
@@ -441,6 +446,15 @@ fn verify_x_login(project_path: String, profile_id: Option<String>) -> AppResult
 fn run_x_account_analysis(app: tauri::AppHandle, project_path: String) -> AppResult<RunState> {
     let path = PathBuf::from(project_path);
     let config: ProjectConfig = read_json(&path.join(".gtm-agent/config.json"))?;
+    let provider = selected_provider()?;
+    let provider_status = provider_status(&provider);
+    if !provider_status.available {
+        return Err(AppError::Agent(
+            provider_status
+                .error
+                .unwrap_or_else(|| format!("{} is not available", provider.title)),
+        ));
+    }
     write_x_channel_setup(&path)?;
     let current_status = read_x_channel_status(&path);
     if current_status.account_status != XAccountStatus::Authenticated {
@@ -465,6 +479,9 @@ fn run_x_account_analysis(app: tauri::AppHandle, project_path: String) -> AppRes
         id: run_id.clone(),
         kind: "x_account_analysis".into(),
         status: RunStatus::Running,
+        provider_id: Some(provider.id.clone()),
+        provider_title: Some(provider.title.clone()),
+        external_session_id: None,
         codex_thread_id: None,
         started_at: Utc::now().to_rfc3339(),
         completed_at: None,
@@ -482,10 +499,10 @@ fn run_x_account_analysis(app: tauri::AppHandle, project_path: String) -> AppRes
     let app_handle = app.clone();
     let run_for_thread = run.clone();
     thread::spawn(move || {
-        let result = execute_codex_turn(
+        let result = execute_agent_turn(
             &path,
-            &config,
             &run_for_thread,
+            &provider,
             &x_account_analysis_prompt(
                 &config,
                 current_status
@@ -1206,7 +1223,7 @@ fn unsupported_server_request_response(id: Value) -> Value {
         "id": id,
         "error": {
             "code": -32000,
-            "message": "GTM Agent only handles ACP permission requests during initial analysis",
+            "message": "GTM Agent only handles ACP permission requests during analysis",
         },
     })
 }
@@ -1905,7 +1922,7 @@ Account verified by app: {account}
 Goal:
 Configure the X channel for draft-first outreach. Do not post, like, follow, send, or publicly interact. Only inspect the logged-in account and write local channel context files.
 
-The app has already verified that Chrome is signed into X. Do not spend the run checking whether login exists. Open or inspect the account in Chrome only to learn its visible profile, recent posts, replies, and account-specific voice.
+The app has already verified that Chrome is signed into X. Do not spend the run checking whether login exists. Open or inspect the account in Chrome only to learn its visible profile, recent posts, replies, and account-specific voice. If the Chrome plugin needs to open or focus a Chrome window for the selected profile, do it as part of this run without asking for separate user confirmation.
 
 Then rewrite only these files:
 - `.gtm-agent/channels/x/profile.md`
