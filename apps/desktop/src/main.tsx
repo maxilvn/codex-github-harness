@@ -2,13 +2,13 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./lib/api";
-import type { CodexDetection, ContextDoc, ProjectState } from "./lib/types";
+import type { AgentProviderStatus, ContextDoc, ProjectState } from "./lib/types";
 import "./styles.css";
 
 const logoBlack = new URL("./assets/brand/two-wedge-logo-black-transparent.png", import.meta.url).href;
 
 function App() {
-  const [codex, setCodex] = React.useState<CodexDetection | null>(null);
+  const [agentProvider, setAgentProvider] = React.useState<AgentProviderStatus | null>(null);
   const [project, setProject] = React.useState<ProjectState | null>(null);
   const [websiteUrl, setWebsiteUrl] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -21,8 +21,15 @@ function App() {
   }, [project]);
 
   React.useEffect(() => {
-    api.detectCodex().then(setCodex).catch((err) => {
-      setCodex({ available: false, error: String(err) });
+    api.detectAgentProvider().then(setAgentProvider).catch((err) => {
+      setAgentProvider({
+        id: "agent",
+        title: "Agent",
+        command: "",
+        args: [],
+        available: false,
+        error: String(err),
+      });
     });
     let cancelled = false;
     api.loadLastProject()
@@ -80,7 +87,7 @@ function App() {
             <BrandMark />
             <span>GTM Agent</span>
           </div>
-          <CodexBadge codex={codex} />
+          <AgentBadge provider={agentProvider} />
         </section>
       ) : null}
 
@@ -152,12 +159,12 @@ function UrlIcon({ websiteUrl }: { websiteUrl: string }) {
   );
 }
 
-function CodexBadge({ codex }: { codex: CodexDetection | null | undefined }) {
-  if (!codex) return <div className="badge neutral">Checking Codex</div>;
+function AgentBadge({ provider }: { provider: AgentProviderStatus | null | undefined }) {
+  if (!provider) return <div className="badge neutral">Checking agent</div>;
   return (
-    <div className={codex.available ? "badge success" : "badge danger"}>
-      <strong>{codex.available ? "Codex ready" : "Codex missing"}</strong>
-      <span>{codex.version || codex.error || "No version found"}</span>
+    <div className={provider.available ? "badge success" : "badge danger"}>
+      <strong>{provider.available ? "Agent ready" : "Agent missing"}</strong>
+      <span>{provider.available ? provider.title : provider.error || "No agent found"}</span>
     </div>
   );
 }

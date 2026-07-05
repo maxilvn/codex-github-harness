@@ -1,4 +1,8 @@
-export interface CodexDetection {
+export interface AgentProviderStatus {
+  id: string;
+  title: string;
+  command: string;
+  args: string[];
   available: boolean;
   path?: string | null;
   version?: string | null;
@@ -25,6 +29,9 @@ export interface RunState {
   id: string;
   kind: "initial_analysis";
   status: "running" | "completed" | "failed";
+  providerId?: string | null;
+  providerTitle?: string | null;
+  externalSessionId?: string | null;
   codexThreadId?: string | null;
   startedAt: string;
   completedAt?: string | null;
@@ -40,7 +47,7 @@ export interface RunActivity {
 
 export interface ProjectState {
   config: ProjectConfig;
-  codex: CodexDetection;
+  agentProvider: AgentProviderStatus;
   docs: ContextDoc[];
   latestRun?: RunState | null;
   runActivity: RunActivity[];

@@ -1,7 +1,8 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -20,8 +21,8 @@ enum AppError {
     Json(#[from] serde_json::Error),
     #[error("invalid input: {0}")]
     Invalid(String),
-    #[error("codex error: {0}")]
-    Codex(String),
+    #[error("agent error: {0}")]
+    Agent(String),
     #[error("open error: {0}")]
     Open(String),
 }
@@ -39,7 +40,30 @@ type AppResult<T> = Result<T, AppError>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CodexDetection {
+struct AgentProvider {
+    id: String,
+    title: String,
+    command: String,
+    args: Vec<String>,
+    env: Vec<AgentEnvVar>,
+    enabled: bool,
+    selected: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentEnvVar {
+    name: String,
+    value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentProviderStatus {
+    id: String,
+    title: String,
+    command: String,
+    args: Vec<String>,
     available: bool,
     path: Option<String>,
     version: Option<String>,
@@ -56,6 +80,8 @@ struct CreateProjectRequest {
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
     last_project_path: Option<String>,
+    #[serde(default)]
+    providers: Vec<AgentProvider>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,7 +99,7 @@ struct ProjectConfig {
 #[serde(rename_all = "camelCase")]
 struct ProjectState {
     config: ProjectConfig,
-    codex: CodexDetection,
+    agent_provider: AgentProviderStatus,
     docs: Vec<ContextDoc>,
     latest_run: Option<RunState>,
     run_activity: Vec<RunActivity>,
@@ -94,6 +120,13 @@ struct RunState {
     id: String,
     kind: String,
     status: RunStatus,
+    #[serde(default)]
+    provider_id: Option<String>,
+    #[serde(default)]
+    provider_title: Option<String>,
+    #[serde(default)]
+    external_session_id: Option<String>,
+    #[serde(default)]
     codex_thread_id: Option<String>,
     started_at: String,
     completed_at: Option<String>,
@@ -137,14 +170,13 @@ const DOCS: [(&str, &str, &str); 4] = [
 ];
 
 const RPC_INITIALIZE_ID: i64 = 1;
-const RPC_THREAD_START_ID: i64 = 2;
-const RPC_THREAD_NAME_ID: i64 = 3;
-const RPC_TURN_START_ID: i64 = 4;
+const RPC_SESSION_NEW_ID: i64 = 2;
+const RPC_SESSION_PROMPT_ID: i64 = 3;
 
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            detect_codex,
+            detect_agent_provider,
             default_project_path,
             create_project,
             load_last_project,
@@ -158,8 +190,8 @@ pub fn run() {
 }
 
 #[tauri::command]
-fn detect_codex() -> CodexDetection {
-    detect_codex_impl()
+fn detect_agent_provider() -> AppResult<AgentProviderStatus> {
+    selected_provider_status()
 }
 
 #[tauri::command]
@@ -230,7 +262,7 @@ fn load_project(project_path: String) -> AppResult<ProjectState> {
         .unwrap_or_default();
     Ok(ProjectState {
         config,
-        codex: detect_codex_impl(),
+        agent_provider: selected_provider_status()?,
         docs: read_docs(&path)?,
         latest_run,
         run_activity,
@@ -241,6 +273,15 @@ fn load_project(project_path: String) -> AppResult<ProjectState> {
 fn run_initial_analysis(app: tauri::AppHandle, project_path: String) -> AppResult<RunState> {
     let path = PathBuf::from(project_path);
     let config: ProjectConfig = read_json(&path.join(".gtm-agent/config.json"))?;
+    let provider = selected_provider()?;
+    let provider_status = provider_status(&provider);
+    if !provider_status.available {
+        return Err(AppError::Agent(
+            provider_status
+                .error
+                .unwrap_or_else(|| format!("{} is not available", provider.title)),
+        ));
+    }
     let run_id = format!("run_{}", Utc::now().format("%Y%m%d%H%M%S"));
     let run_path = run_manifest_path(&path, &run_id);
     let log_path = path.join(".gtm-agent/runs").join(format!("{run_id}.jsonl"));
@@ -248,6 +289,9 @@ fn run_initial_analysis(app: tauri::AppHandle, project_path: String) -> AppResul
         id: run_id.clone(),
         kind: "initial_analysis".into(),
         status: RunStatus::Running,
+        provider_id: Some(provider.id.clone()),
+        provider_title: Some(provider.title.clone()),
+        external_session_id: None,
         codex_thread_id: None,
         started_at: Utc::now().to_rfc3339(),
         completed_at: None,
@@ -265,7 +309,7 @@ fn run_initial_analysis(app: tauri::AppHandle, project_path: String) -> AppResul
     let app_handle = app.clone();
     let run_for_thread = run.clone();
     thread::spawn(move || {
-        let result = execute_initial_analysis(&path, &config, &run_for_thread);
+        let result = execute_initial_analysis(&path, &config, &run_for_thread, &provider);
         let _ = app_handle.emit(
             "project-updated",
             serde_json::json!({ "projectPath": path.to_string_lossy(), "runId": run_id }),
@@ -285,10 +329,8 @@ fn run_initial_analysis(app: tauri::AppHandle, project_path: String) -> AppResul
 
 #[tauri::command]
 fn open_project_in_codex(project_path: String) -> AppResult<()> {
-    let detection = detect_codex_impl();
-    let binary = detection
-        .path
-        .ok_or_else(|| AppError::Open("codex binary not found".into()))?;
+    let binary =
+        resolve_command("codex").ok_or_else(|| AppError::Open("codex binary not found".into()))?;
     Command::new(binary)
         .arg("app")
         .arg(project_path)
@@ -308,15 +350,10 @@ fn execute_initial_analysis(
     project: &Path,
     config: &ProjectConfig,
     initial: &RunState,
+    provider: &AgentProvider,
 ) -> AppResult<()> {
-    let detection = detect_codex_impl();
-    let binary = detection.path.ok_or_else(|| {
-        AppError::Codex(
-            detection
-                .error
-                .unwrap_or_else(|| "codex binary not found".into()),
-        )
-    })?;
+    let binary = resolve_command(&provider.command)
+        .ok_or_else(|| AppError::Agent(format!("{} command not found", provider.command)))?;
     let prompt = initial_analysis_prompt(config);
     let log_path = PathBuf::from(&initial.log_path);
     let log_file = Arc::new(Mutex::new(
@@ -327,25 +364,26 @@ fn execute_initial_analysis(
     ));
 
     let mut child = Command::new(binary)
-        .args(codex_app_server_args())
+        .args(&provider.args)
+        .envs(provider.env.iter().map(|item| (&item.name, &item.value)))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|err| AppError::Codex(format!("failed to launch codex: {err}")))?;
+        .map_err(|err| AppError::Agent(format!("failed to launch {}: {err}", provider.title)))?;
 
     let mut stdin = child
         .stdin
         .take()
-        .ok_or_else(|| AppError::Codex("missing codex stdin".into()))?;
+        .ok_or_else(|| AppError::Agent("missing agent stdin".into()))?;
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| AppError::Codex("missing codex stdout".into()))?;
+        .ok_or_else(|| AppError::Agent("missing agent stdout".into()))?;
     let stderr = child
         .stderr
         .take()
-        .ok_or_else(|| AppError::Codex("missing codex stderr".into()))?;
+        .ok_or_else(|| AppError::Agent("missing agent stderr".into()))?;
 
     let stderr_log = Arc::clone(&log_file);
     let stderr_handle = thread::spawn(move || -> AppResult<()> {
@@ -358,11 +396,11 @@ fn execute_initial_analysis(
         Ok(())
     });
 
-    send_rpc(&mut stdin, &initialize_request(), &log_file)?;
+    send_rpc(&mut stdin, &acp_initialize_request(), &log_file)?;
 
     let mut reader = BufReader::new(stdout);
     let mut line = String::new();
-    let mut thread_id = None::<String>;
+    let mut session_id = None::<String>;
     let mut turn_error = None::<String>;
     let mut turn_completed = false;
 
@@ -376,68 +414,63 @@ fn execute_initial_analysis(
         let message: Value = serde_json::from_str(&raw_line)?;
 
         if message.get("error").is_some() {
-            if rpc_id_is(&message, RPC_THREAD_NAME_ID) {
-                continue;
-            }
             turn_error = rpc_error_message(&message);
             break;
         }
 
         if let Some(request_id) = server_request_id(&message) {
-            send_rpc(
-                &mut stdin,
-                &unsupported_server_request_response(request_id),
-                &log_file,
-            )?;
+            let response = if message.get("method").and_then(Value::as_str)
+                == Some("session/request_permission")
+            {
+                permission_rejected_response(request_id, &message)
+            } else {
+                unsupported_server_request_response(request_id)
+            };
+            send_rpc(&mut stdin, &response, &log_file)?;
             continue;
         }
 
         if rpc_id_is(&message, RPC_INITIALIZE_ID) {
-            send_rpc(&mut stdin, &thread_start_request(project), &log_file)?;
+            send_rpc(&mut stdin, &acp_session_new_request(project), &log_file)?;
             continue;
         }
 
-        if rpc_id_is(&message, RPC_THREAD_START_ID) {
-            let id = codex_thread_id_from_app_server_message(&message)
-                .ok_or_else(|| AppError::Codex("thread/start response missing thread id".into()))?;
-            let started = if thread_id.as_deref() == Some(id.as_str()) {
-                let mut started = initial.clone();
-                started.codex_thread_id = Some(id.clone());
-                started
-            } else {
-                record_thread_id(project, initial, &id)?
-            };
-            thread_id = Some(id.clone());
-            send_rpc(
-                &mut stdin,
-                &thread_name_request(&id, &config.name),
-                &log_file,
+        if rpc_id_is(&message, RPC_SESSION_NEW_ID) {
+            let id = acp_session_id_from_message(&message)
+                .ok_or_else(|| AppError::Agent("session/new response missing session id".into()))?;
+            let mut started = initial.clone();
+            started.external_session_id = Some(id.clone());
+            session_id = Some(id.clone());
+            append_event(
+                project,
+                "agent.session_started",
+                "Agent session started",
+                serde_json::json!({
+                    "runId": initial.id,
+                    "providerId": provider.id,
+                    "providerTitle": provider.title,
+                    "externalSessionId": id,
+                }),
             )?;
             send_rpc(
                 &mut stdin,
-                &turn_start_request(project, &id, &prompt),
+                &acp_session_prompt_request(&id, &prompt),
                 &log_file,
             )?;
             write_json_pretty(&run_manifest_path(project, &initial.id), &started)?;
             continue;
         }
 
-        if thread_id.is_none() {
-            if let Some(id) = codex_thread_id_from_app_server_message(&message) {
-                thread_id = Some(id.clone());
-                let started = record_thread_id(project, initial, &id)?;
-                write_json_pretty(&run_manifest_path(project, &initial.id), &started)?;
+        if rpc_id_is(&message, RPC_SESSION_PROMPT_ID) {
+            match acp_prompt_stop_reason(&message).as_deref() {
+                Some("end_turn") => turn_completed = true,
+                Some("max_tokens") | Some("max_turn_requests") => turn_completed = true,
+                Some("cancelled") => turn_error = Some("Agent turn was cancelled".into()),
+                Some("refusal") => turn_error = Some("Agent refused the prompt".into()),
+                Some(other) => turn_error = Some(format!("Agent stopped with reason {other}")),
+                None => turn_error = Some("session/prompt response missing stop reason".into()),
             }
-        }
-
-        if message.get("method").and_then(Value::as_str) == Some("turn/completed") {
-            if message.pointer("/params/threadId").and_then(Value::as_str) == thread_id.as_deref() {
-                match completed_turn_error(&message) {
-                    Some(error) => turn_error = Some(error),
-                    None => turn_completed = true,
-                }
-                break;
-            }
+            break;
         }
     }
 
@@ -450,7 +483,7 @@ fn execute_initial_analysis(
 
     let mut finished = initial.clone();
     finished.completed_at = Some(Utc::now().to_rfc3339());
-    finished.codex_thread_id = thread_id;
+    finished.external_session_id = session_id;
 
     if turn_completed {
         finished.status = RunStatus::Completed;
@@ -461,22 +494,21 @@ fn execute_initial_analysis(
             "Initial analysis completed",
             serde_json::json!({
                 "runId": initial.id,
-                "codexThreadId": finished.codex_thread_id,
+                "providerId": finished.provider_id,
+                "externalSessionId": finished.external_session_id,
             }),
         )?;
         Ok(())
     } else {
         finished.status = RunStatus::Failed;
-        finished.error = Some(
-            turn_error
-                .unwrap_or_else(|| format!("codex app-server exited before completion: {status}")),
-        );
+        finished.error =
+            Some(turn_error.unwrap_or_else(|| format!("agent exited before completion: {status}")));
         write_json_pretty(&run_manifest_path(project, &initial.id), &finished)?;
-        Err(AppError::Codex(
+        Err(AppError::Agent(
             finished
                 .error
                 .clone()
-                .unwrap_or_else(|| "codex app-server failed".into()),
+                .unwrap_or_else(|| "agent run failed".into()),
         ))
     }
 }
@@ -484,78 +516,86 @@ fn execute_initial_analysis(
 fn join_reader(handle: thread::JoinHandle<AppResult<()>>) -> AppResult<()> {
     handle
         .join()
-        .map_err(|_| AppError::Codex("codex output reader panicked".into()))?
+        .map_err(|_| AppError::Agent("agent output reader panicked".into()))?
 }
 
-fn codex_app_server_args() -> Vec<String> {
-    vec!["app-server".into(), "--stdio".into()]
-}
-
-fn initialize_request() -> Value {
+fn acp_initialize_request() -> Value {
     serde_json::json!({
+        "jsonrpc": "2.0",
         "id": RPC_INITIALIZE_ID,
         "method": "initialize",
         "params": {
+            "protocolVersion": 1,
+            "clientCapabilities": {},
             "clientInfo": {
                 "name": "gtm-agent",
+                "title": "GTM Agent",
                 "version": env!("CARGO_PKG_VERSION"),
-            },
-            "capabilities": {
-                "experimentalApi": true,
-            },
+            }
         },
     })
 }
 
-fn thread_start_request(project: &Path) -> Value {
+fn acp_session_new_request(project: &Path) -> Value {
     serde_json::json!({
-        "id": RPC_THREAD_START_ID,
-        "method": "thread/start",
+        "jsonrpc": "2.0",
+        "id": RPC_SESSION_NEW_ID,
+        "method": "session/new",
         "params": {
             "cwd": project.to_string_lossy(),
-            "ephemeral": false,
-            "approvalPolicy": "never",
-            "sandbox": "workspace-write",
-            "personality": "pragmatic",
-            "threadSource": "gtm-agent",
-            "sessionStartSource": "startup",
+            "mcpServers": [],
         },
     })
 }
 
-fn thread_name_request(thread_id: &str, project_name: &str) -> Value {
+fn acp_session_prompt_request(session_id: &str, prompt: &str) -> Value {
     serde_json::json!({
-        "id": RPC_THREAD_NAME_ID,
-        "method": "thread/name/set",
+        "jsonrpc": "2.0",
+        "id": RPC_SESSION_PROMPT_ID,
+        "method": "session/prompt",
         "params": {
-            "threadId": thread_id,
-            "name": format!("{} GTM analysis", project_name),
-        },
-    })
-}
-
-fn turn_start_request(project: &Path, thread_id: &str, prompt: &str) -> Value {
-    serde_json::json!({
-        "id": RPC_TURN_START_ID,
-        "method": "turn/start",
-        "params": {
-            "threadId": thread_id,
-            "cwd": project.to_string_lossy(),
-            "approvalPolicy": "never",
-            "personality": "pragmatic",
-            "sandboxPolicy": {
-                "type": "workspaceWrite",
-                "writableRoots": [project.to_string_lossy()],
-                "networkAccess": true,
-                "excludeTmpdirEnvVar": false,
-                "excludeSlashTmp": false,
-            },
-            "input": [{
+            "sessionId": session_id,
+            "prompt": [{
                 "type": "text",
                 "text": prompt,
-                "text_elements": [],
             }],
         },
+    })
+}
+
+fn permission_rejected_response(id: Value, request: &Value) -> Value {
+    let reject_option = request
+        .pointer("/params/options")
+        .and_then(Value::as_array)
+        .and_then(|options| {
+            options.iter().find_map(|option| {
+                let kind = option.get("kind").and_then(Value::as_str);
+                let option_id = option.get("optionId").and_then(Value::as_str);
+                matches!(kind, Some("reject_once") | Some("reject_always")).then_some(option_id)?
+            })
+        });
+
+    if let Some(option_id) = reject_option {
+        return serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "outcome": {
+                    "outcome": "selected",
+                    "optionId": option_id,
+                }
+            }
+        });
+    }
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {
+            "outcome": {
+                "outcome": "cancelled"
+            }
+        }
     })
 }
 
@@ -573,7 +613,7 @@ fn log_raw_line(log_file: &Arc<Mutex<File>>, line: &str) -> AppResult<()> {
     writeln!(
         log_file
             .lock()
-            .map_err(|_| AppError::Codex("log lock poisoned".into()))?,
+            .map_err(|_| AppError::Agent("log lock poisoned".into()))?,
         "{line}"
     )?;
     Ok(())
@@ -583,25 +623,10 @@ fn log_jsonl(log_file: &Arc<Mutex<File>>, value: &Value) -> AppResult<()> {
     writeln!(
         log_file
             .lock()
-            .map_err(|_| AppError::Codex("log lock poisoned".into()))?,
+            .map_err(|_| AppError::Agent("log lock poisoned".into()))?,
         "{value}"
     )?;
     Ok(())
-}
-
-fn record_thread_id(project: &Path, initial: &RunState, thread_id: &str) -> AppResult<RunState> {
-    let mut started = initial.clone();
-    started.codex_thread_id = Some(thread_id.to_string());
-    append_event(
-        project,
-        "codex.thread_started",
-        "Codex thread started",
-        serde_json::json!({
-            "runId": initial.id,
-            "codexThreadId": thread_id,
-        }),
-    )?;
-    Ok(started)
 }
 
 fn rpc_id_is(message: &Value, id: i64) -> bool {
@@ -629,99 +654,160 @@ fn server_request_id(message: &Value) -> Option<Value> {
 
 fn unsupported_server_request_response(id: Value) -> Value {
     serde_json::json!({
+        "jsonrpc": "2.0",
         "id": id,
         "error": {
             "code": -32000,
-            "message": "GTM Agent does not handle interactive server requests during initial analysis",
+            "message": "GTM Agent only handles ACP permission requests during initial analysis",
         },
     })
 }
 
-fn codex_thread_id_from_app_server_message(message: &Value) -> Option<String> {
+fn acp_session_id_from_message(message: &Value) -> Option<String> {
     message
-        .pointer("/result/thread/id")
-        .or_else(|| message.pointer("/params/thread/id"))
+        .pointer("/result/sessionId")
         .and_then(Value::as_str)
         .map(str::to_string)
 }
 
-fn completed_turn_error(message: &Value) -> Option<String> {
-    let status = message
-        .pointer("/params/turn/status")
-        .and_then(Value::as_str);
-    match status {
-        Some("completed") => None,
-        Some("failed") | Some("interrupted") => Some(
-            message
-                .pointer("/params/turn/error/message")
-                .and_then(Value::as_str)
-                .unwrap_or("Codex turn did not complete")
-                .to_string(),
-        ),
-        Some(other) => Some(format!("Codex turn ended with status {other}")),
-        None => Some("Codex turn completion was missing status".into()),
-    }
+fn acp_prompt_stop_reason(message: &Value) -> Option<String> {
+    message
+        .pointer("/result/stopReason")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
-fn detect_codex_impl() -> CodexDetection {
-    match codex_binary() {
-        Some(path) => match Command::new(&path).arg("--version").output() {
-            Ok(output) if output.status.success() => CodexDetection {
-                available: true,
-                path: Some(path.to_string_lossy().to_string()),
-                version: Some(String::from_utf8_lossy(&output.stdout).trim().to_string()),
-                error: None,
-            },
-            Ok(output) => CodexDetection {
-                available: false,
-                path: Some(path.to_string_lossy().to_string()),
-                version: None,
-                error: Some(String::from_utf8_lossy(&output.stderr).trim().to_string()),
-            },
-            Err(err) => CodexDetection {
-                available: false,
-                path: Some(path.to_string_lossy().to_string()),
-                version: None,
-                error: Some(err.to_string()),
-            },
+fn selected_provider() -> AppResult<AgentProvider> {
+    read_app_settings()?
+        .providers
+        .into_iter()
+        .find(|provider| provider.enabled && provider.selected)
+        .ok_or_else(|| AppError::Agent("no enabled agent provider selected".into()))
+}
+
+fn selected_provider_status() -> AppResult<AgentProviderStatus> {
+    Ok(provider_status(&selected_provider()?))
+}
+
+fn provider_status(provider: &AgentProvider) -> AgentProviderStatus {
+    match resolve_command(&provider.command) {
+        Some(path) => AgentProviderStatus {
+            id: provider.id.clone(),
+            title: provider.title.clone(),
+            command: provider.command.clone(),
+            args: provider.args.clone(),
+            available: true,
+            path: Some(path.to_string_lossy().to_string()),
+            version: command_version(&path),
+            error: None,
         },
-        None => CodexDetection {
+        None => AgentProviderStatus {
+            id: provider.id.clone(),
+            title: provider.title.clone(),
+            command: provider.command.clone(),
+            args: provider.args.clone(),
             available: false,
             path: None,
             version: None,
-            error: Some("codex binary not found".into()),
+            error: Some(format!("{} command not found", provider.command)),
         },
     }
 }
 
-fn codex_binary() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("CODEX_BIN") {
-        let candidate = PathBuf::from(path);
-        if candidate.exists() {
-            return Some(candidate);
+fn default_agent_providers() -> Vec<AgentProvider> {
+    vec![
+        provider(
+            "codex",
+            "Codex",
+            "npx",
+            &["-y", "@agentclientprotocol/codex-acp"],
+            true,
+        ),
+        provider(
+            "claude",
+            "Claude Code",
+            "npx",
+            &["-y", "@agentclientprotocol/claude-agent-acp"],
+            false,
+        ),
+        provider("cursor", "Cursor", "cursor-agent", &["acp"], false),
+        provider("gemini", "Gemini", "gemini", &["--acp"], false),
+        provider(
+            "copilot",
+            "Copilot",
+            "copilot",
+            &["--acp", "--stdio"],
+            false,
+        ),
+        provider("custom", "Custom", "", &[], false),
+    ]
+}
+
+fn provider(id: &str, title: &str, command: &str, args: &[&str], selected: bool) -> AgentProvider {
+    AgentProvider {
+        id: id.into(),
+        title: title.into(),
+        command: command.into(),
+        args: args.iter().map(|arg| (*arg).into()).collect(),
+        env: Vec::new(),
+        enabled: !command.is_empty(),
+        selected,
+    }
+}
+
+fn merge_agent_providers(configured: Vec<AgentProvider>) -> Vec<AgentProvider> {
+    if configured.is_empty() {
+        return default_agent_providers();
+    }
+
+    let mut providers = configured;
+    for default_provider in default_agent_providers() {
+        if !providers
+            .iter()
+            .any(|provider| provider.id == default_provider.id)
+        {
+            providers.push(default_provider);
         }
     }
-    for path in [
-        "/Users/maxi.lvn/.local/bin/codex",
-        "/opt/homebrew/bin/codex",
-        "/usr/local/bin/codex",
-        "/usr/bin/codex",
-    ] {
-        let candidate = PathBuf::from(path);
-        if candidate.exists() {
-            return Some(candidate);
+
+    if !providers
+        .iter()
+        .any(|provider| provider.enabled && provider.selected)
+    {
+        if let Some(provider) = providers.iter_mut().find(|provider| provider.enabled) {
+            provider.selected = true;
         }
     }
-    Command::new("sh")
-        .arg("-lc")
-        .arg("command -v codex")
+
+    providers
+}
+
+fn resolve_command(command: &str) -> Option<PathBuf> {
+    let command = command.trim();
+    if command.is_empty() {
+        return None;
+    }
+
+    let candidate = PathBuf::from(command);
+    if candidate.components().count() > 1 || candidate.is_absolute() {
+        return candidate.exists().then_some(candidate);
+    }
+
+    env::var_os("PATH").and_then(|paths| {
+        env::split_paths(&paths)
+            .map(|path| path.join(command))
+            .find(|path| path.exists())
+    })
+}
+
+fn command_version(path: &Path) -> Option<String> {
+    Command::new(path)
+        .arg("--version")
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .and_then(|output| {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            (!path.is_empty()).then(|| PathBuf::from(path))
-        })
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|version| !version.is_empty())
 }
 
 fn write_workspace_files(project_path: &Path, config: &ProjectConfig) -> AppResult<()> {
@@ -780,7 +866,7 @@ fn read_run_activity(log_path: &Path) -> AppResult<Vec<RunActivity>> {
     let file = File::open(log_path)?;
     let mut activity = Vec::new();
     let mut message_deltas = HashMap::<String, String>::new();
-    let mut completed_messages = HashSet::<String>::new();
+    let mut tool_titles = HashMap::<String, String>::new();
 
     for line in BufReader::new(file).lines() {
         let line = line?;
@@ -788,47 +874,60 @@ fn read_run_activity(log_path: &Path) -> AppResult<Vec<RunActivity>> {
             continue;
         };
         let method = value.get("method").and_then(Value::as_str);
-        match method {
-            Some("item/agentMessage/delta") => {
-                if let (Some(item_id), Some(delta)) = (
-                    value.pointer("/params/itemId").and_then(Value::as_str),
-                    value.pointer("/params/delta").and_then(Value::as_str),
+        if method != Some("session/update") {
+            continue;
+        }
+
+        let update = value.pointer("/params/update").unwrap_or(&Value::Null);
+        match update.get("sessionUpdate").and_then(Value::as_str) {
+            Some("agent_message_chunk") => {
+                let text = update
+                    .pointer("/content/text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if text.trim().is_empty() {
+                    continue;
+                }
+                let message_id = update
+                    .get("messageId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("agent");
+                message_deltas
+                    .entry(message_id.to_string())
+                    .or_default()
+                    .push_str(text);
+            }
+            Some("tool_call") => {
+                if let (Some(tool_id), Some(title)) = (
+                    update.get("toolCallId").and_then(Value::as_str),
+                    update.get("title").and_then(Value::as_str),
                 ) {
-                    message_deltas
-                        .entry(item_id.to_string())
-                        .or_default()
-                        .push_str(delta);
+                    tool_titles.insert(tool_id.to_string(), title.to_string());
+                    activity.push(RunActivity {
+                        kind: "tool".into(),
+                        title: "Agent".into(),
+                        message: compact_text(title, 220),
+                    });
                 }
             }
-            Some("item/completed") => match value
-                .pointer("/params/item/type")
-                .and_then(Value::as_str)
-            {
-                Some("agentMessage") => {
-                    if let Some(text) = value.pointer("/params/item/text").and_then(Value::as_str) {
-                        if let Some(item_id) =
-                            value.pointer("/params/item/id").and_then(Value::as_str)
-                        {
-                            completed_messages.insert(item_id.to_string());
-                        }
-                        activity.push(RunActivity {
-                            kind: "message".into(),
-                            title: "Codex".into(),
-                            message: compact_text(text, 520),
-                        });
-                    }
+            Some("tool_call_update") => {
+                if let Some(message) = acp_tool_update_message(update, &tool_titles) {
+                    activity.push(RunActivity {
+                        kind: "tool".into(),
+                        title: "Agent".into(),
+                        message,
+                    });
                 }
-                _ => {}
-            },
+            }
             _ => {}
         }
     }
 
-    for (item_id, text) in message_deltas {
-        if !completed_messages.contains(&item_id) && !text.trim().is_empty() {
+    for (_item_id, text) in message_deltas {
+        if !text.trim().is_empty() {
             activity.push(RunActivity {
                 kind: "message".into(),
-                title: "Codex".into(),
+                title: "Agent".into(),
                 message: compact_text(&text, 520),
             });
         }
@@ -836,6 +935,32 @@ fn read_run_activity(log_path: &Path) -> AppResult<Vec<RunActivity>> {
 
     let keep_from = activity.len().saturating_sub(12);
     Ok(activity.into_iter().skip(keep_from).collect())
+}
+
+fn acp_tool_update_message(
+    update: &Value,
+    tool_titles: &HashMap<String, String>,
+) -> Option<String> {
+    let tool_id = update.get("toolCallId").and_then(Value::as_str);
+    let status = update.get("status").and_then(Value::as_str);
+    let title = tool_id
+        .and_then(|id| tool_titles.get(id))
+        .map(String::as_str)
+        .unwrap_or("Agent tool");
+    let content_text = update
+        .get("content")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items.iter().find_map(|item| {
+                item.pointer("/content/text")
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.trim().is_empty())
+            })
+        });
+
+    content_text
+        .map(|text| compact_text(text, 300))
+        .or_else(|| status.map(|status| compact_text(&format!("{title}: {status}"), 220)))
 }
 
 fn compact_text(value: &str, max_chars: usize) -> String {
@@ -1004,18 +1129,20 @@ fn app_settings_path() -> AppResult<PathBuf> {
 fn read_app_settings() -> AppResult<AppSettings> {
     let path = app_settings_path()?;
     if !path.exists() {
-        return Ok(AppSettings::default());
+        return Ok(AppSettings {
+            last_project_path: None,
+            providers: default_agent_providers(),
+        });
     }
-    read_json(&path)
+    let mut settings: AppSettings = read_json(&path)?;
+    settings.providers = merge_agent_providers(settings.providers);
+    Ok(settings)
 }
 
 fn save_last_project_path(project_path: &Path) -> AppResult<()> {
-    write_json_pretty(
-        &app_settings_path()?,
-        &AppSettings {
-            last_project_path: Some(project_path.to_string_lossy().to_string()),
-        },
-    )
+    let mut settings = read_app_settings()?;
+    settings.last_project_path = Some(project_path.to_string_lossy().to_string());
+    write_json_pretty(&app_settings_path()?, &settings)
 }
 
 #[cfg(test)]
@@ -1035,137 +1162,178 @@ mod tests {
     }
 
     #[test]
-    fn parses_app_server_thread_started_response() {
-        let message = serde_json::json!({
-            "id": RPC_THREAD_START_ID,
-            "result": {
-                "thread": {
-                    "id": "019f2957-b734-7211-9bbc-f74f5980d6f3"
-                }
-            }
-        });
+    fn seeds_default_agent_providers() {
+        let providers = default_agent_providers();
+        assert_eq!(providers[0].id, "codex");
+        assert_eq!(providers[0].command, "npx");
         assert_eq!(
-            codex_thread_id_from_app_server_message(&message).as_deref(),
-            Some("019f2957-b734-7211-9bbc-f74f5980d6f3")
+            providers[0].args,
+            vec![
+                "-y".to_string(),
+                "@agentclientprotocol/codex-acp".to_string()
+            ]
+        );
+        assert!(providers[0].selected);
+        assert!(providers.iter().any(|provider| provider.id == "custom"));
+    }
+
+    #[test]
+    fn merges_provider_defaults_without_losing_selection() {
+        let configured = vec![AgentProvider {
+            id: "custom".into(),
+            title: "Custom Agent".into(),
+            command: "/tmp/custom-agent".into(),
+            args: vec!["acp".into()],
+            env: Vec::new(),
+            enabled: true,
+            selected: true,
+        }];
+
+        let providers = merge_agent_providers(configured);
+        assert!(providers.iter().any(|provider| provider.id == "codex"));
+        assert!(
+            providers
+                .iter()
+                .find(|provider| provider.id == "custom")
+                .unwrap()
+                .selected
         );
     }
 
     #[test]
-    fn parses_app_server_thread_started_notification() {
-        let message = serde_json::json!({
-            "method": "thread/started",
-            "params": {
-                "thread": {
-                    "id": "019f2957-b734-7211-9bbc-f74f5980d6f3"
-                }
-            }
-        });
-        assert_eq!(
-            codex_thread_id_from_app_server_message(&message).as_deref(),
-            Some("019f2957-b734-7211-9bbc-f74f5980d6f3")
-        );
+    fn reads_legacy_settings_without_providers() {
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "lastProjectPath": "/tmp/project"
+        }))
+        .unwrap();
+        assert_eq!(settings.last_project_path.as_deref(), Some("/tmp/project"));
+        assert!(settings.providers.is_empty());
     }
 
     #[test]
-    fn builds_codex_app_server_args() {
-        assert_eq!(codex_app_server_args(), vec!["app-server", "--stdio"]);
+    fn builds_acp_initialize_request() {
+        let request = acp_initialize_request();
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["method"], "initialize");
+        assert_eq!(request["params"]["protocolVersion"], 1);
+        assert_eq!(request["params"]["clientInfo"]["name"], "gtm-agent");
     }
 
     #[test]
-    fn builds_thread_start_request_for_persisted_workspace_thread() {
-        let request = thread_start_request(Path::new("/tmp/project"));
-        assert_eq!(request["method"], "thread/start");
+    fn builds_acp_session_new_request() {
+        let request = acp_session_new_request(Path::new("/tmp/project"));
+        assert_eq!(request["method"], "session/new");
         assert_eq!(request["params"]["cwd"], "/tmp/project");
-        assert_eq!(request["params"]["ephemeral"], false);
-        assert_eq!(request["params"]["approvalPolicy"], "never");
-        assert_eq!(request["params"]["sandbox"], "workspace-write");
-        assert_eq!(request["params"]["threadSource"], "gtm-agent");
+        assert_eq!(request["params"]["mcpServers"], serde_json::json!([]));
     }
 
     #[test]
-    fn builds_turn_start_request_with_workspace_write_access() {
-        let request = turn_start_request(Path::new("/tmp/project"), "thread_123", "analyze");
-        assert_eq!(request["method"], "turn/start");
-        assert_eq!(request["params"]["threadId"], "thread_123");
+    fn builds_acp_session_prompt_request() {
+        let request = acp_session_prompt_request("sess_123", "analyze");
+        assert_eq!(request["method"], "session/prompt");
+        assert_eq!(request["params"]["sessionId"], "sess_123");
+        assert_eq!(request["params"]["prompt"][0]["type"], "text");
+        assert_eq!(request["params"]["prompt"][0]["text"], "analyze");
+    }
+
+    #[test]
+    fn parses_acp_session_and_stop_reason() {
+        let message = serde_json::json!({
+            "id": RPC_SESSION_NEW_ID,
+            "result": {
+                "sessionId": "sess_abc123"
+            }
+        });
         assert_eq!(
-            request["params"]["sandboxPolicy"],
-            serde_json::json!({
-                "type": "workspaceWrite",
-                "writableRoots": ["/tmp/project"],
-                "networkAccess": true,
-                "excludeTmpdirEnvVar": false,
-                "excludeSlashTmp": false,
-            })
+            acp_session_id_from_message(&message).as_deref(),
+            Some("sess_abc123")
         );
-        assert_eq!(request["params"]["input"][0]["text"], "analyze");
-    }
 
-    #[test]
-    fn detects_failed_completed_turns() {
         let completed = serde_json::json!({
-            "method": "turn/completed",
-            "params": {
-                "turn": {
-                    "status": "completed"
-                }
-            }
-        });
-        assert!(completed_turn_error(&completed).is_none());
-
-        let failed = serde_json::json!({
-            "method": "turn/completed",
-            "params": {
-                "turn": {
-                    "status": "failed",
-                    "error": {
-                        "message": "model failed"
-                    }
-                }
+            "id": RPC_SESSION_PROMPT_ID,
+            "result": {
+                "stopReason": "end_turn"
             }
         });
         assert_eq!(
-            completed_turn_error(&failed).as_deref(),
-            Some("model failed")
+            acp_prompt_stop_reason(&completed).as_deref(),
+            Some("end_turn")
         );
     }
 
     #[test]
-    fn reads_run_activity_from_app_server_log() {
+    fn rejects_acp_permission_requests() {
+        let request = serde_json::json!({
+            "id": 8,
+            "method": "session/request_permission",
+            "params": {
+                "options": [
+                    { "optionId": "allow-once", "name": "Allow", "kind": "allow_once" },
+                    { "optionId": "reject-once", "name": "Reject", "kind": "reject_once" }
+                ]
+            },
+        });
+        let response = permission_rejected_response(serde_json::json!(8), &request);
+        assert_eq!(response["result"]["outcome"]["outcome"], "selected");
+        assert_eq!(response["result"]["outcome"]["optionId"], "reject-once");
+    }
+
+    #[test]
+    fn reads_legacy_codex_thread_id_run_manifest() {
+        let run: RunState = serde_json::from_value(serde_json::json!({
+            "id": "run_1",
+            "kind": "initial_analysis",
+            "status": "completed",
+            "codexThreadId": "thread_legacy",
+            "startedAt": "2026-01-01T00:00:00Z",
+            "completedAt": "2026-01-01T00:01:00Z",
+            "logPath": "/tmp/run.jsonl",
+            "error": null
+        }))
+        .unwrap();
+        assert_eq!(run.codex_thread_id.as_deref(), Some("thread_legacy"));
+        assert!(run.external_session_id.is_none());
+    }
+
+    #[test]
+    fn reads_run_activity_from_acp_log() {
         let log_path =
             std::env::temp_dir().join(format!("gtm-agent-log-{}.jsonl", Uuid::new_v4().simple()));
         fs::write(
             &log_path,
             [
                 serde_json::json!({
-                    "method": "thread/started",
-                    "params": { "thread": { "id": "thread_123" } }
-                })
-                .to_string(),
-                serde_json::json!({
-                    "method": "item/completed",
+                    "method": "session/update",
                     "params": {
-                        "item": {
-                            "type": "commandExecution",
-                            "status": "completed",
-                            "command": "curl https://example.com"
+                        "sessionId": "sess_123",
+                        "update": {
+                            "sessionUpdate": "tool_call",
+                            "toolCallId": "tool_123",
+                            "title": "Searching public sources",
+                            "kind": "search",
+                            "status": "pending"
                         }
                     }
                 })
                 .to_string(),
                 serde_json::json!({
-                    "method": "item/completed",
+                    "method": "session/update",
                     "params": {
-                        "item": {
-                            "type": "agentMessage",
-                            "id": "msg_123",
-                            "text": "I found the source material."
+                        "sessionId": "sess_123",
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "messageId": "msg_123",
+                            "content": {
+                                "type": "text",
+                                "text": "I found the source material."
+                            }
                         }
                     }
                 })
                 .to_string(),
                 serde_json::json!({
-                    "method": "turn/completed",
-                    "params": { "turn": { "status": "completed" } }
+                    "id": RPC_SESSION_PROMPT_ID,
+                    "result": { "stopReason": "end_turn" }
                 })
                 .to_string(),
             ]
@@ -1174,9 +1342,10 @@ mod tests {
         .unwrap();
 
         let activity = read_run_activity(&log_path).unwrap();
-        assert_eq!(activity.len(), 1);
-        assert_eq!(activity[0].title, "Codex");
-        assert_eq!(activity[0].message, "I found the source material.");
+        assert_eq!(activity.len(), 2);
+        assert_eq!(activity[0].message, "Searching public sources");
+        assert_eq!(activity[1].title, "Agent");
+        assert_eq!(activity[1].message, "I found the source material.");
 
         fs::remove_file(log_path).unwrap();
     }
