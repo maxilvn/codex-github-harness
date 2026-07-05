@@ -1,6 +1,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./lib/api";
 import type {
@@ -355,20 +356,11 @@ function ProjectView({
           return;
         }
         setChromeProfiles(profiles);
-        setSelectedChromeProfileId((current) => {
-          if (current && profiles.some((profile) => profile.id === current)) {
-            return current;
-          }
-          if (
-            activeChannelSetup?.chromeProfileId &&
-            profiles.some(
-              (profile) => profile.id === activeChannelSetup.chromeProfileId,
-            )
-          ) {
-            return activeChannelSetup.chromeProfileId;
-          }
-          return profiles[0]?.id ?? null;
-        });
+        setSelectedChromeProfileId((current) =>
+          current && profiles.some((profile) => profile.id === current)
+            ? current
+            : null,
+        );
       })
       .catch((err) => {
         if (!isCancelled) {
@@ -724,6 +716,8 @@ function XChannelSetupPanel({
   embedded?: boolean;
 }) {
   const [isProfilePickerOpen, setIsProfilePickerOpen] = React.useState(false);
+  const [hasSelectedProfileForRun, setHasSelectedProfileForRun] =
+    React.useState(false);
   const isReady = setup?.status === "ready";
   const isVerified = setup?.accountStatus === "authenticated";
   const needsLogin = setup?.accountStatus === "needs_login";
@@ -754,17 +748,21 @@ function XChannelSetupPanel({
       ? "Analyzing..."
       : needsLogin
         ? "Sign in to X"
-        : isVerified
-          ? isReady
-            ? "Ready"
-            : "Check again"
-          : "Check profile";
+        : isVerified && !hasSelectedProfileForRun
+          ? "Select"
+          : isVerified
+            ? isReady
+              ? "Ready"
+              : "Check again"
+            : "Select";
   const shouldShowAnalysisOutput =
-    isVerified && (isRunActive || activity.length > 0 || isReady);
+    hasSelectedProfileForRun &&
+    isVerified &&
+    (isRunActive || activity.length > 0 || isReady);
   function useChromeProfile(profileId: string) {
     onSelectChromeProfile(profileId);
+    setHasSelectedProfileForRun(false);
     setIsProfilePickerOpen(false);
-    onVerify(profileId);
   }
   return (
     <div
@@ -786,74 +784,73 @@ function XChannelSetupPanel({
         </div>
       )}
 
-      <div className="x-login-card">
-        <div className="x-login-copy">
-          <strong>Selected Chrome profile</strong>
-          {selectedChromeProfile ? (
-            <div className="x-selected-profile">
-              {isVerified && setup?.accountAvatarUrl ? (
-                <img
-                  className="x-account-avatar"
-                  src={setup.accountAvatarUrl}
-                  alt=""
-                />
-              ) : (
+      {!shouldShowAnalysisOutput ? (
+        <div className="x-login-card">
+          <div className="x-login-copy">
+            <strong>Selected Chrome profile</strong>
+            {selectedChromeProfile ? (
+              <div className="x-selected-profile">
                 <ChromeProfileAvatar profile={selectedChromeProfile} />
-              )}
-              <div>
-                <span>{selectedChromeProfile.name}</span>
-                <p>{profileSubtitle(selectedChromeProfile)}</p>
+                <div>
+                  <span>{selectedChromeProfile.name}</span>
+                  <p>{profileSubtitle(selectedChromeProfile)}</p>
+                </div>
               </div>
-            </div>
-          ) : (
-            <p>
-              {isLoadingChromeProfiles
-                ? "Loading Chrome profiles..."
-                : "No Chrome profile selected yet."}
-            </p>
-          )}
-          <p className="x-profile-note">{loginLabel}</p>
-        </div>
-        <div className="x-login-actions">
-          <button
-            className="secondary"
-            type="button"
-            onClick={() => setIsProfilePickerOpen(true)}
-            disabled={isLoginActionBusy || isLoadingChromeProfiles}
-          >
-            Choose profile
-          </button>
-          {!selectedChromeProfile ? null : needsLogin ? (
-            <>
-              <button
-                className="secondary"
-                type="button"
-                onClick={() => onVerify()}
-                disabled={isLoginActionBusy}
-              >
-                Check again
-              </button>
-              <button
-                className="secondary"
-                type="button"
-                onClick={() => onOpenLogin(selectedChromeProfileId)}
-                disabled={isLoginActionBusy}
-              >
-                Sign in to X
-              </button>
-            </>
-          ) : (
+            ) : (
+              <p>
+                {isLoadingChromeProfiles
+                  ? "Loading Chrome profiles..."
+                  : "No Chrome profile selected yet."}
+              </p>
+            )}
+            <p className="x-profile-note">{loginLabel}</p>
+          </div>
+          <div className="x-login-actions">
             <button
               className="secondary"
               type="button"
-              onClick={() => onVerify()}
-              disabled={isLoginActionBusy}
+              onClick={() => setIsProfilePickerOpen(true)}
+              disabled={isLoginActionBusy || isLoadingChromeProfiles}
             >
-              {actionLabel}
+              Choose profile
             </button>
-          )}
+            {!selectedChromeProfile ? null : needsLogin ? (
+              <>
+                <button
+                  className="secondary"
+                  type="button"
+                  onClick={() => {
+                    setHasSelectedProfileForRun(true);
+                    onVerify();
+                  }}
+                  disabled={isLoginActionBusy}
+                >
+                  Check again
+                </button>
+                <button
+                  className="secondary"
+                  type="button"
+                  onClick={() => onOpenLogin(selectedChromeProfileId)}
+                  disabled={isLoginActionBusy}
+                >
+                  Sign in to X
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setHasSelectedProfileForRun(true);
+                  onVerify();
+                }}
+                disabled={isLoginActionBusy}
+              >
+                {actionLabel}
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {isProfilePickerOpen
         ? createPortal(
@@ -893,16 +890,27 @@ function XChannelSetupPanel({
                     >
                       <ChromeProfileAvatar profile={profile} />
                       <div>
-                        <strong>{profile.name}</strong>
+                        <strong>
+                          {profile.name}
+                          {profile.isRecommended ? (
+                            <span className="profile-recommended">
+                              Recommended
+                            </span>
+                          ) : null}
+                        </strong>
                         <span>{profileSubtitle(profile)}</span>
                       </div>
-                      <em>Use this profile</em>
+                      <em>
+                        {profile.id === selectedChromeProfileId
+                          ? "Selected"
+                          : "Choose"}
+                      </em>
                     </button>
                   ))}
                 </div>
                 <p className="profile-picker-note">
-                  After selection, GTM Agent opens X in that Chrome profile and
-                  checks whether an X account is already signed in.
+                  Pick the Chrome profile first. GTM Agent only checks X and
+                  starts analysis after you confirm with Select.
                 </p>
               </article>
             </div>,
@@ -911,28 +919,38 @@ function XChannelSetupPanel({
         : null}
 
       {shouldShowAnalysisOutput ? (
-        <div className="x-codex-card">
-          <div className="x-codex-output">
-            {activity.length ? (
-              activity.slice(-6).map((item, index) => (
-                <article
-                  className="x-codex-item"
-                  key={`${item.title}-${index}`}
-                >
-                  <p>{item.message}</p>
-                </article>
-              ))
-            ) : (
-              <article className="x-codex-item">
-                <p>
-                  Codex will inspect the signed-in X account in Chrome and write
-                  profile, rules, examples, and voice.
-                </p>
-              </article>
+        <div className="x-analysis-grid">
+          <div className="x-analysis-files">
+            <p className="eyebrow">Writing</p>
+            {["profile.md", "voice.md", "rules.md", "examples.md"].map(
+              (file) => (
+                <code key={file}>{file}</code>
+              ),
             )}
-            {isRunActive ? (
-              <div className="analyzing-shimmer">Analyzing...</div>
-            ) : null}
+          </div>
+          <div className="x-codex-card">
+            <div className="x-codex-output">
+              {activity.length ? (
+                activity.slice(-6).map((item, index) => (
+                  <article
+                    className="x-codex-item"
+                    key={`${item.title}-${index}`}
+                  >
+                    <p>{item.message}</p>
+                  </article>
+                ))
+              ) : (
+                <article className="x-codex-item">
+                  <p>
+                    Codex will inspect the selected X account in Chrome and
+                    write profile, rules, examples, and voice.
+                  </p>
+                </article>
+              )}
+              {isRunActive ? (
+                <div className="analyzing-shimmer">Analyzing...</div>
+              ) : null}
+            </div>
           </div>
         </div>
       ) : null}
@@ -978,6 +996,15 @@ function XChannelSetupPanel({
 }
 
 function ChromeProfileAvatar({ profile }: { profile: ChromeProfile }) {
+  if (profile.avatarPath) {
+    return (
+      <img
+        className="chrome-profile-avatar chrome-profile-avatar-image"
+        src={convertFileSrc(profile.avatarPath)}
+        alt=""
+      />
+    );
+  }
   return (
     <span
       className="chrome-profile-avatar"

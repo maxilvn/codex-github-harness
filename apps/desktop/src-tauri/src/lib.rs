@@ -169,7 +169,10 @@ struct ChromeProfile {
     name: String,
     email: Option<String>,
     account_name: Option<String>,
+    avatar_path: Option<String>,
     profile_color: Option<i64>,
+    has_x_session: bool,
+    is_recommended: bool,
     is_default: bool,
 }
 
@@ -300,11 +303,6 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running GTM Agent");
-}
-
-#[tauri::command]
-fn detect_agent_provider() -> AppResult<AgentProviderStatus> {
-    selected_provider_status()
 }
 
 #[tauri::command]
@@ -503,13 +501,7 @@ fn run_x_account_analysis(app: tauri::AppHandle, project_path: String) -> AppRes
             &path,
             &run_for_thread,
             &provider,
-            &x_account_analysis_prompt(
-                &config,
-                current_status
-                    .account_label
-                    .as_deref()
-                    .or(current_status.account_handle.as_deref()),
-            ),
+            &x_account_analysis_prompt(&config, &current_status),
             "X account analysis",
         );
         let status_result = match &result {
@@ -720,18 +712,57 @@ fn read_chrome_profiles() -> AppResult<Vec<ChromeProfile>> {
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_string),
+            avatar_path: chrome_profile_avatar_path(&user_data_dir, id),
             profile_color: profile
                 .get("profile_highlight_color")
                 .and_then(Value::as_i64),
+            has_x_session: check_x_session_cookies(Some(id))
+                .map(|status| status.has_session)
+                .unwrap_or(false),
+            is_recommended: false,
             is_default: id == "Default",
         })
         .collect::<Vec<_>>();
+    let recommended_id = profiles
+        .iter()
+        .filter(|profile| profile.has_x_session && !profile.is_default)
+        .min_by_key(|profile| chrome_profile_sort_key(&profile.id))
+        .or_else(|| profiles.iter().find(|profile| profile.has_x_session))
+        .or_else(|| profiles.iter().find(|profile| profile.is_default))
+        .map(|profile| profile.id.clone());
+    for profile in &mut profiles {
+        profile.is_recommended = recommended_id.as_deref() == Some(profile.id.as_str());
+    }
     profiles.sort_by(|a, b| {
-        b.is_default
-            .cmp(&a.is_default)
+        b.is_recommended
+            .cmp(&a.is_recommended)
+            .then_with(|| b.has_x_session.cmp(&a.has_x_session))
+            .then_with(|| chrome_profile_sort_key(&a.id).cmp(&chrome_profile_sort_key(&b.id)))
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
     Ok(profiles)
+}
+
+fn chrome_profile_avatar_path(user_data_dir: &Path, profile_id: &str) -> Option<String> {
+    [
+        "Google Profile Picture.png",
+        "Account Avatar.png",
+        "Profile Picture.png",
+    ]
+    .iter()
+    .map(|file_name| user_data_dir.join(profile_id).join(file_name))
+    .find(|path| path.exists())
+    .map(|path| path.to_string_lossy().to_string())
+}
+
+fn chrome_profile_sort_key(profile_id: &str) -> i64 {
+    if profile_id == "Default" {
+        return i64::MAX;
+    }
+    profile_id
+        .strip_prefix("Profile ")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(i64::MAX - 1)
 }
 
 fn check_x_login_in_chrome(profile_id: Option<&str>) -> AppResult<XLoginCheck> {
@@ -1910,19 +1941,36 @@ Keep the files concise but specific enough that future GTM tasks can use them as
     )
 }
 
-fn x_account_analysis_prompt(config: &ProjectConfig, account_label: Option<&str>) -> String {
-    let account = account_label.unwrap_or("the currently signed-in X account");
+fn x_account_analysis_prompt(config: &ProjectConfig, status: &XChannelStatus) -> String {
+    let account = status
+        .account_label
+        .as_deref()
+        .or(status.account_handle.as_deref())
+        .unwrap_or("the currently signed-in X account");
+    let account_handle = status.account_handle.as_deref().unwrap_or("unknown");
+    let account_avatar_url = status.account_avatar_url.as_deref().unwrap_or("unknown");
+    let chrome_profile_id = status.chrome_profile_id.as_deref().unwrap_or("unknown");
+    let checked_at = status.checked_at.as_deref().unwrap_or("unknown");
+    let check_method = status
+        .check_method
+        .as_deref()
+        .unwrap_or("chrome_cookie_probe");
     format!(
-        r#"Use [@chrome](plugin://chrome@openai-bundled) to analyze {account} for this GTM workspace.
+        r#"Configure X outreach for {account} in this GTM workspace.
 
 Website: {url}
 Brand: {name}
 Account verified by app: {account}
+Account handle from app: {account_handle}
+Chrome profile ID from app: {chrome_profile_id}
+Avatar URL from app: {account_avatar_url}
+Verification method: {check_method}
+Verified at: {checked_at}
 
 Goal:
 Configure the X channel for draft-first outreach. Do not post, like, follow, send, or publicly interact. Only inspect the logged-in account and write local channel context files.
 
-The app has already verified that Chrome is signed into X. Do not spend the run checking whether login exists. Open or inspect the account in Chrome only to learn its visible profile, recent posts, replies, and account-specific voice. If the Chrome plugin needs to open or focus a Chrome window for the selected profile, do it as part of this run without asking for separate user confirmation.
+The app has already verified the selected Chrome profile has an authenticated X session. Do not spend the run checking whether login exists. If your ACP provider exposes browser, Chrome, or computer-control tools, use them opportunistically to inspect the visible profile, recent posts, replies, and account-specific voice. If browser tools are unavailable, fail open: complete the channel setup from the app-provided account metadata and the global brand files, explicitly noting in `profile.md`, `voice.md`, and `examples.md` that live post/reply inspection was unavailable and should be refreshed after browser tools are configured.
 
 Then rewrite only these files:
 - `.gtm-agent/channels/x/profile.md`
@@ -1957,20 +2005,26 @@ Write valid JSON with this exact shape:
   "accountStatus": "authenticated",
   "loginStatus": "verified",
   "analysisStatus": "ready",
-  "accountLabel": "@handle or display name",
-  "accountHandle": "@handle when known",
-  "accountAvatarUrl": "avatar URL when known or null",
-  "chromeProfileId": "Chrome profile id selected by the app",
-  "checkMethod": "chrome_cookie_probe",
-  "checkedAt": "ISO-8601 timestamp from the app if already present",
+  "accountLabel": "{account}",
+  "accountHandle": "{account_handle}",
+  "accountAvatarUrl": "{account_avatar_url}",
+  "chromeProfileId": "{chrome_profile_id}",
+  "checkMethod": "{check_method}",
+  "checkedAt": "{checked_at}",
   "updatedAt": "ISO-8601 timestamp"
 }}
+If any provided value is `unknown`, write JSON null for that field instead of the word unknown.
 
 Do not create outreach drafts in this run. Do not modify backend queue files such as `opportunities.jsonl`, `runs.jsonl`, or files in `drafts/` unless they do not exist and are needed as empty placeholders.
 "#,
         account = account,
         url = config.website_url,
-        name = config.name
+        name = config.name,
+        account_handle = account_handle,
+        account_avatar_url = account_avatar_url,
+        chrome_profile_id = chrome_profile_id,
+        check_method = check_method,
+        checked_at = checked_at
     )
 }
 

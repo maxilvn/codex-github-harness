@@ -943,6 +943,12 @@ code {
     0 1px 4px #0000001a;
 }
 
+.chrome-profile-avatar-image {
+  display: block;
+  object-fit: cover;
+  background: #f5f5f5;
+}
+
 .x-account-avatar {
   width: 34px;
   height: 34px;
@@ -1023,16 +1029,38 @@ code {
 }
 
 .profile-picker-list strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   color: #171717;
   font-size: 14px;
   line-height: 19px;
   font-weight: 650;
 }
 
+.profile-recommended {
+  border: 1px solid #e6e6e6;
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: #666666;
+  background: #fafafa;
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 600;
+}
+
 .profile-picker-list span {
   color: #737373;
   font-size: 13px;
   line-height: 18px;
+}
+
+.profile-picker-list .profile-recommended {
+  display: inline-flex;
+  overflow: visible;
+  color: #666666;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 
 .profile-picker-list em {
@@ -1057,6 +1085,32 @@ code {
   border-radius: 8px;
   padding: 12px 12px 10px;
   background: #ffffff;
+}
+
+.x-analysis-grid {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.x-analysis-files {
+  display: grid;
+  gap: 7px;
+  border: 1px solid #eaeaea;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.x-analysis-files code {
+  border: 1px solid #eaeaea;
+  border-radius: 6px;
+  padding: 5px 7px;
+  color: #4d4d4d;
+  background: #fafafa;
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .x-codex-output {

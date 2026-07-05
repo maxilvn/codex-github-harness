@@ -33,19 +33,6 @@ export const api = {
     }
     return call<AgentProviderStatus>("detect_agent_provider");
   },
-  detectAgentProvider() {
-    if (!hasTauriBridge()) {
-      return Promise.resolve<AgentProviderStatus>({
-        id: "agent",
-        title: "Agent",
-        command: "",
-        args: [],
-        available: false,
-        error: "Open the desktop app to use an agent.",
-      });
-    }
-    return call<AgentProviderStatus>("detect_agent_provider");
-  },
   defaultProjectPath(websiteUrl: string) {
     return call<string>("default_project_path", { websiteUrl });
   },
