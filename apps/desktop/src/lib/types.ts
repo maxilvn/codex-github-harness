@@ -3,6 +3,8 @@ export interface AgentProviderStatus {
   title: string;
   command: string;
   args: string[];
+  enabled: boolean;
+  selected: boolean;
   available: boolean;
   path?: string | null;
   version?: string | null;

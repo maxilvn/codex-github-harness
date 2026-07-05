@@ -64,6 +64,8 @@ struct AgentProviderStatus {
     title: String,
     command: String,
     args: Vec<String>,
+    enabled: bool,
+    selected: bool,
     available: bool,
     path: Option<String>,
     version: Option<String>,
@@ -287,6 +289,8 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             detect_agent_provider,
+            list_agent_providers,
+            select_agent_provider,
             default_project_path,
             create_project,
             load_last_project,
@@ -307,6 +311,42 @@ pub fn run() {
 
 #[tauri::command]
 fn detect_agent_provider() -> AppResult<AgentProviderStatus> {
+    selected_provider_status()
+}
+
+#[tauri::command]
+fn list_agent_providers() -> AppResult<Vec<AgentProviderStatus>> {
+    Ok(read_app_settings()?
+        .providers
+        .iter()
+        .map(provider_status)
+        .collect())
+}
+
+#[tauri::command]
+fn select_agent_provider(provider_id: String) -> AppResult<AgentProviderStatus> {
+    if provider_id != "codex" {
+        return Err(AppError::Invalid(
+            "This ACP provider is not available yet. Use Codex for now.".into(),
+        ));
+    }
+
+    let mut settings = read_app_settings()?;
+    let mut found = false;
+    for provider in &mut settings.providers {
+        let is_selected = provider.id == provider_id;
+        provider.selected = is_selected;
+        if is_selected {
+            provider.enabled = true;
+            found = true;
+        }
+    }
+    if !found {
+        return Err(AppError::Invalid(format!(
+            "unknown agent provider: {provider_id}"
+        )));
+    }
+    write_app_settings(&settings)?;
     selected_provider_status()
 }
 
@@ -1292,6 +1332,8 @@ fn provider_status(provider: &AgentProvider) -> AgentProviderStatus {
             title: provider.title.clone(),
             command: provider.command.clone(),
             args: provider.args.clone(),
+            enabled: provider.enabled,
+            selected: provider.selected,
             available: true,
             path: Some(path.to_string_lossy().to_string()),
             version: command_version(&path),
@@ -1302,6 +1344,8 @@ fn provider_status(provider: &AgentProvider) -> AgentProviderStatus {
             title: provider.title.clone(),
             command: provider.command.clone(),
             args: provider.args.clone(),
+            enabled: provider.enabled,
+            selected: provider.selected,
             available: false,
             path: None,
             version: None,
@@ -1327,6 +1371,7 @@ fn default_agent_providers() -> Vec<AgentProvider> {
             false,
         ),
         provider("cursor", "Cursor", "cursor-agent", &["acp"], false),
+        provider("devin", "Devin", "devin", &["acp"], false),
         provider("gemini", "Gemini", "gemini", &["--acp"], false),
         provider(
             "copilot",
@@ -2143,10 +2188,14 @@ fn read_app_settings() -> AppResult<AppSettings> {
     Ok(settings)
 }
 
+fn write_app_settings(settings: &AppSettings) -> AppResult<()> {
+    write_json_pretty(&app_settings_path()?, settings)
+}
+
 fn save_last_project_path(project_path: &Path) -> AppResult<()> {
     let mut settings = read_app_settings()?;
     settings.last_project_path = Some(project_path.to_string_lossy().to_string());
-    write_json_pretty(&app_settings_path()?, &settings)
+    write_app_settings(&settings)
 }
 
 #[cfg(test)]
@@ -2168,6 +2217,10 @@ mod tests {
     #[test]
     fn seeds_default_agent_providers() {
         let providers = default_agent_providers();
+        let provider_ids: Vec<_> = providers
+            .iter()
+            .map(|provider| provider.id.as_str())
+            .collect();
         assert_eq!(providers[0].id, "codex");
         assert_eq!(providers[0].command, "npx");
         assert_eq!(
@@ -2178,7 +2231,10 @@ mod tests {
             ]
         );
         assert!(providers[0].selected);
-        assert!(providers.iter().any(|provider| provider.id == "custom"));
+        assert_eq!(
+            provider_ids,
+            vec!["codex", "claude", "cursor", "devin", "gemini", "copilot", "custom"]
+        );
     }
 
     #[test]
