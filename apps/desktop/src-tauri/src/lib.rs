@@ -1,5 +1,5 @@
 use base64::Engine;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -1083,6 +1083,13 @@ fn execute_agent_turn(
             }
             break;
         }
+
+        if initial.kind == "initial_analysis"
+            && initial_analysis_completion_time(project, &initial.started_at)?.is_some()
+        {
+            turn_completed = true;
+            break;
+        }
     }
 
     drop(stdin);
@@ -1487,6 +1494,117 @@ fn read_docs(project_path: &Path) -> AppResult<Vec<ContextDoc>> {
         .collect()
 }
 
+fn reconcile_initial_analysis_completion(
+    project_path: &Path,
+    run_path: &Path,
+    run: &mut RunState,
+) -> AppResult<()> {
+    if run.kind != "initial_analysis" || run.status != RunStatus::Running {
+        return Ok(());
+    }
+
+    let Some(completed_at) = initial_analysis_completion_time(project_path, &run.started_at)?
+    else {
+        return Ok(());
+    };
+
+    run.status = RunStatus::Completed;
+    run.completed_at = Some(completed_at);
+    run.error = None;
+    write_json_pretty(run_path, run)
+}
+
+fn initial_analysis_completion_time(
+    project_path: &Path,
+    run_started_at: &str,
+) -> AppResult<Option<String>> {
+    if !source_docs_have_content(project_path) {
+        return Ok(None);
+    }
+    source_docs_completion_event_time(project_path, run_started_at)
+}
+
+fn source_docs_have_content(project_path: &Path) -> bool {
+    DOCS.iter().all(|(_, file_name, title)| {
+        fs::read_to_string(project_path.join(file_name))
+            .map(|content| document_has_body_content(&content, title))
+            .unwrap_or(false)
+    })
+}
+
+fn document_has_body_content(content: &str, title: &str) -> bool {
+    content.lines().any(|line| {
+        let trimmed = line.trim();
+        !trimmed.is_empty() && trimmed != format!("# {title}")
+    })
+}
+
+fn source_docs_completion_event_time(
+    project_path: &Path,
+    run_started_at: &str,
+) -> AppResult<Option<String>> {
+    let path = project_path.join(".gtm-agent/events.jsonl");
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let file = File::open(path)?;
+    for line in BufReader::new(file).lines() {
+        let line = line?;
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if is_source_docs_completion_event(&value) {
+            let completed_at = value
+                .get("createdAt")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| Utc::now().to_rfc3339());
+            if event_happened_after_run_start(&completed_at, run_started_at) {
+                return Ok(Some(completed_at));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn event_happened_after_run_start(event_at: &str, run_started_at: &str) -> bool {
+    let Ok(event_at) = DateTime::parse_from_rfc3339(event_at) else {
+        return false;
+    };
+    let Ok(run_started_at) = DateTime::parse_from_rfc3339(run_started_at) else {
+        return false;
+    };
+    event_at >= run_started_at
+}
+
+fn is_source_docs_completion_event(value: &Value) -> bool {
+    if value.get("eventType").and_then(Value::as_str) != Some("task.completed") {
+        return false;
+    }
+
+    let completed_docs = value
+        .pointer("/payload/documents")
+        .and_then(Value::as_array)
+        .map(|documents| {
+            documents
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<HashSet<_>>()
+        });
+    if let Some(completed_docs) = completed_docs {
+        return DOCS
+            .iter()
+            .all(|(_, file_name, _)| completed_docs.contains(file_name));
+    }
+
+    value
+        .get("summary")
+        .and_then(Value::as_str)
+        .map(|summary| summary.eq_ignore_ascii_case("GTM source documents completed"))
+        .unwrap_or(false)
+}
+
 fn x_channel_context_doc(file_name: &str) -> Option<(&'static str, &'static str, &'static str)> {
     X_CHANNEL_CONTEXT_DOCS
         .iter()
@@ -1667,7 +1785,13 @@ fn latest_run(project_path: &Path) -> AppResult<Option<RunState>> {
         .filter(|path| path.extension().and_then(|v| v.to_str()) == Some("json"))
         .collect::<Vec<_>>();
     manifests.sort();
-    manifests.last().map(|path| read_json(path)).transpose()
+    let Some(path) = manifests.last() else {
+        return Ok(None);
+    };
+
+    let mut run: RunState = read_json(path)?;
+    reconcile_initial_analysis_completion(project_path, path, &mut run)?;
+    Ok(Some(run))
 }
 
 fn read_run_activity(log_path: &Path) -> AppResult<Vec<RunActivity>> {
@@ -2603,6 +2727,178 @@ mod tests {
         );
 
         fs::remove_file(log_path).unwrap();
+    }
+
+    #[test]
+    fn detects_completed_initial_analysis_artifacts() {
+        let project_path =
+            std::env::temp_dir().join(format!("gtm-agent-test-{}", Uuid::new_v4().simple()));
+        fs::create_dir_all(project_path.join(".gtm-agent")).unwrap();
+        for (_, file_name, title) in DOCS {
+            fs::write(
+                project_path.join(file_name),
+                format!("# {title}\n\nUseful body content.\n"),
+            )
+            .unwrap();
+        }
+        fs::write(
+            project_path.join(".gtm-agent/events.jsonl"),
+            serde_json::json!({
+                "eventType": "task.completed",
+                "summary": "GTM source documents completed",
+                "payload": {
+                    "documents": [
+                        "product-information.md",
+                        "marketing-strategy.md",
+                        "competitor-analysis.md",
+                        "brand-voice.md"
+                    ]
+                },
+                "createdAt": "2026-07-06T17:36:34Z"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            initial_analysis_completion_time(&project_path, "2026-07-06T17:32:22Z")
+                .unwrap()
+                .as_deref(),
+            Some("2026-07-06T17:36:34Z")
+        );
+
+        fs::remove_dir_all(project_path).unwrap();
+    }
+
+    #[test]
+    fn keeps_initial_analysis_running_until_docs_are_ready() {
+        let project_path =
+            std::env::temp_dir().join(format!("gtm-agent-test-{}", Uuid::new_v4().simple()));
+        fs::create_dir_all(project_path.join(".gtm-agent")).unwrap();
+        for (_, file_name, title) in DOCS {
+            fs::write(project_path.join(file_name), format!("# {title}\n\n")).unwrap();
+        }
+        fs::write(
+            project_path.join(".gtm-agent/events.jsonl"),
+            serde_json::json!({
+                "eventType": "task.completed",
+                "summary": "GTM source documents completed",
+                "payload": {},
+                "createdAt": "2026-07-06T17:36:34Z"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        assert!(
+            initial_analysis_completion_time(&project_path, "2026-07-06T17:32:22Z")
+                .unwrap()
+                .is_none()
+        );
+
+        fs::remove_dir_all(project_path).unwrap();
+    }
+
+    #[test]
+    fn ignores_completion_events_from_previous_runs() {
+        let project_path =
+            std::env::temp_dir().join(format!("gtm-agent-test-{}", Uuid::new_v4().simple()));
+        fs::create_dir_all(project_path.join(".gtm-agent")).unwrap();
+        for (_, file_name, title) in DOCS {
+            fs::write(
+                project_path.join(file_name),
+                format!("# {title}\n\nUseful body content.\n"),
+            )
+            .unwrap();
+        }
+        fs::write(
+            project_path.join(".gtm-agent/events.jsonl"),
+            serde_json::json!({
+                "eventType": "task.completed",
+                "summary": "GTM source documents completed",
+                "payload": {
+                    "documents": [
+                        "product-information.md",
+                        "marketing-strategy.md",
+                        "competitor-analysis.md",
+                        "brand-voice.md"
+                    ]
+                },
+                "createdAt": "2026-07-06T17:36:34Z"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        assert!(
+            initial_analysis_completion_time(&project_path, "2026-07-06T17:40:00Z")
+                .unwrap()
+                .is_none()
+        );
+
+        fs::remove_dir_all(project_path).unwrap();
+    }
+
+    #[test]
+    fn latest_run_reconciles_completed_initial_analysis_manifest() {
+        let project_path =
+            std::env::temp_dir().join(format!("gtm-agent-test-{}", Uuid::new_v4().simple()));
+        fs::create_dir_all(project_path.join(".gtm-agent/runs")).unwrap();
+        for (_, file_name, title) in DOCS {
+            fs::write(
+                project_path.join(file_name),
+                format!("# {title}\n\nUseful body content.\n"),
+            )
+            .unwrap();
+        }
+        fs::write(
+            project_path.join(".gtm-agent/events.jsonl"),
+            serde_json::json!({
+                "eventType": "task.completed",
+                "summary": "GTM source documents completed",
+                "payload": {
+                    "documents": [
+                        "product-information.md",
+                        "marketing-strategy.md",
+                        "competitor-analysis.md",
+                        "brand-voice.md"
+                    ]
+                },
+                "createdAt": "2026-07-06T17:36:34Z"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let run = RunState {
+            id: "run_test".into(),
+            kind: "initial_analysis".into(),
+            status: RunStatus::Running,
+            provider_id: Some("codex".into()),
+            provider_title: Some("Codex".into()),
+            external_session_id: Some("session_test".into()),
+            codex_thread_id: None,
+            started_at: "2026-07-06T17:32:22Z".into(),
+            completed_at: None,
+            log_path: project_path
+                .join(".gtm-agent/runs/run_test.jsonl")
+                .to_string_lossy()
+                .to_string(),
+            error: None,
+        };
+        let run_path = project_path.join(".gtm-agent/runs/run_test.json");
+        write_json_pretty(&run_path, &run).unwrap();
+
+        let reconciled = latest_run(&project_path).unwrap().unwrap();
+        assert_eq!(reconciled.status, RunStatus::Completed);
+        assert_eq!(
+            reconciled.completed_at.as_deref(),
+            Some("2026-07-06T17:36:34Z")
+        );
+
+        let persisted: RunState = read_json(&run_path).unwrap();
+        assert_eq!(persisted.status, RunStatus::Completed);
+
+        fs::remove_dir_all(project_path).unwrap();
     }
 
     #[test]
