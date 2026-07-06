@@ -1097,17 +1097,16 @@ function XChannelSetupPanel({
   const selectedProfileHasXSession = Boolean(
     selectedChromeProfile?.hasXSession,
   );
-  const accountName = xAccountDisplayName(setup);
   const loginLabel = hasVerifiedSelectedProfile
-    ? `Signed in as ${accountName}`
+    ? "X account detected in this Chrome profile."
     : needsLogin || (selectedChromeProfile && !selectedProfileHasXSession)
-      ? "No signed-in X account found in this Chrome profile."
+      ? "No X account detected in this Chrome profile."
       : isUnknown
         ? "GTM Agent could not verify this Chrome profile. Check again or choose another profile."
         : selectedChromeProfile
           ? selectedProfileHasXSession
-            ? "X session found in this Chrome profile. The username appears here once analysis can read it."
-            : "No signed-in X account found in this Chrome profile."
+            ? "X account detected in this Chrome profile."
+            : "No X account detected in this Chrome profile."
           : "Choose the Chrome profile GTM Agent should check.";
   const actionLabel = isChecking
     ? "Checking..."
@@ -1163,11 +1162,7 @@ function XChannelSetupPanel({
                   <span>{selectedChromeProfile.name}</span>
                   <p>{profileSubtitle(selectedChromeProfile)}</p>
                   {selectedProfileHasXSession ? (
-                    <p className="x-selected-account">
-                      {hasVerifiedSelectedProfile
-                        ? xAccountDisplayName(setup)
-                        : "X session found"}
-                    </p>
+                    <p className="x-selected-account">X account detected</p>
                   ) : null}
                 </div>
               </div>
@@ -1274,7 +1269,7 @@ function XChannelSetupPanel({
                               : "profile-x-status"
                           }
                         >
-                          {profileXAccountLabel(profile, setup)}
+                          {profileXAccountLabel(profile)}
                         </span>
                       </div>
                       <em className="profile-picker-action">
@@ -1411,21 +1406,8 @@ function profileSubtitle(profile: ChromeProfile) {
   );
 }
 
-function profileXAccountLabel(
-  profile: ChromeProfile,
-  setup: ChannelSetup | null,
-) {
-  if (
-    setup?.accountStatus === "authenticated" &&
-    setup.chromeProfileId === profile.id
-  ) {
-    return xAccountDisplayName(setup);
-  }
-  return profile.hasXSession ? "X session found" : "Not signed in";
-}
-
-function xAccountDisplayName(setup: ChannelSetup | null) {
-  return setup?.accountHandle ?? setup?.accountLabel ?? "X session found";
+function profileXAccountLabel(profile: ChromeProfile) {
+  return profile.hasXSession ? "X account detected" : "No X account detected";
 }
 
 function profileInitials(profile: ChromeProfile) {

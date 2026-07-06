@@ -875,7 +875,7 @@ fn check_x_login_in_chrome(profile_id: Option<&str>) -> AppResult<XLoginCheck> {
 
     Ok(XLoginCheck {
         account_status: XAccountStatus::Authenticated,
-        account_label: Some("X account in Chrome".into()),
+        account_label: Some("X account detected".into()),
         account_handle: None,
         account_avatar_url: None,
         chrome_profile_id: Some(cookie_profile_id),
