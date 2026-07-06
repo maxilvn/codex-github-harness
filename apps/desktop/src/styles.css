@@ -1152,11 +1152,16 @@ code {
   gap: 10px;
 }
 
-.x-login-card .x-profile-note {
+.x-login-card .x-account-status {
   margin: 0;
   color: #777777;
   font-size: 12px;
   line-height: 18px;
+  font-weight: 550;
+}
+
+.x-login-card .x-account-status.is-detected {
+  color: #2f6f42;
 }
 
 .x-login-actions {
@@ -1186,13 +1191,6 @@ code {
 
 .x-selected-profile p {
   margin: 1px 0 0;
-}
-
-.x-selected-profile .x-selected-account {
-  color: #2f6f42;
-  font-size: 12px;
-  line-height: 17px;
-  font-weight: 600;
 }
 
 .chrome-profile-avatar {

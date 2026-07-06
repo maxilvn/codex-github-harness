@@ -1098,15 +1098,15 @@ function XChannelSetupPanel({
     selectedChromeProfile?.hasXSession,
   );
   const loginLabel = hasVerifiedSelectedProfile
-    ? "X account detected in this Chrome profile."
+    ? "X account detected"
     : needsLogin || (selectedChromeProfile && !selectedProfileHasXSession)
-      ? "No X account detected in this Chrome profile."
+      ? "No X account detected"
       : isUnknown
         ? "GTM Agent could not verify this Chrome profile. Check again or choose another profile."
         : selectedChromeProfile
           ? selectedProfileHasXSession
-            ? "X account detected in this Chrome profile."
-            : "No X account detected in this Chrome profile."
+            ? "X account detected"
+            : "No X account detected"
           : "Choose the Chrome profile GTM Agent should check.";
   const actionLabel = isChecking
     ? "Checking..."
@@ -1161,9 +1161,6 @@ function XChannelSetupPanel({
                 <div>
                   <span>{selectedChromeProfile.name}</span>
                   <p>{profileSubtitle(selectedChromeProfile)}</p>
-                  {selectedProfileHasXSession ? (
-                    <p className="x-selected-account">X account detected</p>
-                  ) : null}
                 </div>
               </div>
             ) : (
@@ -1173,7 +1170,18 @@ function XChannelSetupPanel({
                   : "No Chrome profile selected yet."}
               </p>
             )}
-            <p className="x-profile-note">{loginLabel}</p>
+            <p
+              className={[
+                "x-account-status",
+                selectedChromeProfile && selectedProfileHasXSession
+                  ? "is-detected"
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              {loginLabel}
+            </p>
           </div>
           <div className="x-login-actions">
             <button
