@@ -9,6 +9,7 @@ import type {
   ContextDoc,
   ProjectState,
   RunActivity,
+  ScheduleConfig,
 } from "./lib/types";
 import "./styles.css";
 
@@ -254,6 +255,7 @@ function App() {
         project={project}
         error={error}
         onError={setError}
+        onProjectUpdate={setProject}
         onNewWebsite={() => {
           setError(null);
           setWebsiteUrl("");
@@ -1197,13 +1199,32 @@ type WorkspaceView =
   | { kind: "brand" }
   | { kind: "channel"; channelId: string };
 
-type Schedule = {
-  id: string;
-  channelId: string;
-  cadence: "Daily" | "Weekdays" | "Weekly";
-  time: string;
-  enabled: boolean;
-};
+function accountDisplayName(project: ProjectState) {
+  const email = project.chromeProfile?.email;
+  if (email) {
+    const local = email.split("@")[0] ?? "";
+    if (local) return local[0].toUpperCase() + local.slice(1);
+  }
+  return project.chromeProfile?.name ?? "Account";
+}
+
+function AccountAvatar({ project }: { project: ProjectState }) {
+  const avatar = project.chromeProfile?.avatarDataUrl;
+  if (avatar) {
+    return (
+      <img
+        className="account-avatar account-avatar-image"
+        src={avatar}
+        alt=""
+      />
+    );
+  }
+  return (
+    <span className="account-avatar" aria-hidden="true">
+      {accountDisplayName(project)[0]?.toUpperCase() ?? "A"}
+    </span>
+  );
+}
 
 function DocIcon() {
   return (
@@ -1221,18 +1242,19 @@ function Workspace({
   error,
   onError,
   onNewWebsite,
+  onProjectUpdate,
 }: {
   project: ProjectState;
   error: string | null;
   onError: (error: string | null) => void;
   onNewWebsite: () => void;
+  onProjectUpdate: (project: ProjectState) => void;
 }) {
   const [view, setView] = React.useState<WorkspaceView>({ kind: "inbox" });
   const [openMenu, setOpenMenu] = React.useState<"brand" | "account" | null>(
     null,
   );
   const [selectedDoc, setSelectedDoc] = React.useState<ContextDoc | null>(null);
-  const [schedules, setSchedules] = React.useState<Schedule[]>([]);
   const [isComposerOpen, setIsComposerOpen] = React.useState(false);
   const host = displayHost(project.config.websiteUrl);
   const readyChannels = project.channelSetups.filter(
@@ -1251,6 +1273,15 @@ function Workspace({
           fileName,
         ),
       );
+    } catch (err) {
+      onError(String(err));
+    }
+  }
+
+  async function saveSchedules(schedules: ScheduleConfig[]) {
+    onError(null);
+    try {
+      onProjectUpdate(await api.setSchedules(project.config.path, schedules));
     } catch (err) {
       onError(String(err));
     }
@@ -1278,8 +1309,9 @@ function Workspace({
           onClick={() => setOpenMenu(openMenu === "account" ? null : "account")}
           aria-expanded={openMenu === "account"}
         >
-          <span className="account-avatar" aria-hidden="true">
-            {project.config.name[0]?.toUpperCase() ?? "A"}
+          <AccountAvatar project={project} />
+          <span className="account-chip-name">
+            {accountDisplayName(project)}
           </span>
           <span className="menu-chevron" aria-hidden="true">
             ⌄
@@ -1321,6 +1353,30 @@ function Workspace({
                 <strong>Brand analysis</strong>
               </span>
             </button>
+            {readyChannels.length ? (
+              <>
+                <p className="dropdown-heading">Channels</p>
+                {readyChannels.map((setup) => {
+                  const option = channelOption(setup.id);
+                  return (
+                    <button
+                      className="dropdown-item"
+                      key={setup.id}
+                      type="button"
+                      onClick={() => {
+                        setView({ kind: "channel", channelId: setup.id });
+                        setOpenMenu(null);
+                      }}
+                    >
+                      <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
+                      <span className="dropdown-item-copy">
+                        <strong>{setup.name}</strong>
+                      </span>
+                    </button>
+                  );
+                })}
+              </>
+            ) : null}
             <div className="dropdown-divider" />
             <button
               className="dropdown-item"
@@ -1343,12 +1399,13 @@ function Workspace({
         {openMenu === "account" ? (
           <nav className="dropdown dropdown-account" aria-label="Account menu">
             <div className="dropdown-item is-current">
-              <span className="account-avatar" aria-hidden="true">
-                {project.config.name[0]?.toUpperCase() ?? "A"}
-              </span>
+              <AccountAvatar project={project} />
               <span className="dropdown-item-copy">
-                <strong>{project.config.name} workspace</strong>
-                <em>{project.agentProvider.title} · local</em>
+                <strong>{accountDisplayName(project)}</strong>
+                <em>
+                  {project.chromeProfile?.email ??
+                    `${project.agentProvider.title} · local`}
+                </em>
               </span>
             </div>
             <div className="dropdown-divider" />
@@ -1408,32 +1465,6 @@ function Workspace({
             </span>
             Schedules
           </button>
-
-          <p className="sidebar-heading">Channels</p>
-          {readyChannels.length ? (
-            readyChannels.map((setup) => {
-              const option = channelOption(setup.id);
-              const isActive =
-                view.kind === "channel" && view.channelId === setup.id;
-              return (
-                <button
-                  className={isActive ? "nav-item is-active" : "nav-item"}
-                  key={setup.id}
-                  type="button"
-                  onClick={() =>
-                    setView({ kind: "channel", channelId: setup.id })
-                  }
-                >
-                  <span className="nav-favicon">
-                    <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
-                  </span>
-                  {setup.name}
-                </button>
-              );
-            })
-          ) : (
-            <p className="sidebar-note">No channels ready yet.</p>
-          )}
         </aside>
 
         <section className="home-main">
@@ -1444,10 +1475,10 @@ function Workspace({
           ) : view.kind === "schedules" ? (
             <SchedulesView
               readyChannels={readyChannels}
-              schedules={schedules}
+              schedules={project.schedules}
               isComposerOpen={isComposerOpen}
               onToggleComposer={setIsComposerOpen}
-              onChange={setSchedules}
+              onChange={(next) => void saveSchedules(next)}
             />
           ) : view.kind === "brand" ? (
             <BrandView project={project} onOpenDoc={setSelectedDoc} />
@@ -1499,6 +1530,41 @@ function InboxView({ onCreateSchedule }: { onCreateSchedule: () => void }) {
   );
 }
 
+function recommendedSchedules(setup: ChannelSetup): ScheduleConfig[] {
+  const recommendation = setup.schedule;
+  if (!recommendation) return [];
+  const time = recommendation.bestTime ?? "09:00";
+  const result: ScheduleConfig[] = [];
+  if (recommendation.repliesPerDay && recommendation.repliesPerDay > 0) {
+    result.push({
+      id: `rec_${setup.id}_replies`,
+      channelId: setup.id,
+      kind: "replies",
+      cadence: "Daily",
+      time,
+      quantity: recommendation.repliesPerDay,
+      enabled: true,
+    });
+  }
+  if (recommendation.postsPerWeek && recommendation.postsPerWeek > 0) {
+    result.push({
+      id: `rec_${setup.id}_posts`,
+      channelId: setup.id,
+      kind: "posts",
+      cadence: "Weekly",
+      time,
+      quantity: recommendation.postsPerWeek,
+      enabled: true,
+    });
+  }
+  return result;
+}
+
+function scheduleLabel(schedule: ScheduleConfig, channelName: string) {
+  const unit = schedule.kind === "replies" ? "draft replies" : "draft posts";
+  return `${schedule.quantity} ${unit} · ${channelName}`;
+}
+
 function SchedulesView({
   readyChannels,
   schedules,
@@ -1507,17 +1573,31 @@ function SchedulesView({
   onChange,
 }: {
   readyChannels: ChannelSetup[];
-  schedules: Schedule[];
+  schedules: ScheduleConfig[];
   isComposerOpen: boolean;
   onToggleComposer: (open: boolean) => void;
-  onChange: (schedules: Schedule[]) => void;
+  onChange: (schedules: ScheduleConfig[]) => void;
 }) {
   const [draftChannelId, setDraftChannelId] = React.useState(
     readyChannels[0]?.id ?? "x",
   );
-  const [draftCadence, setDraftCadence] =
-    React.useState<Schedule["cadence"]>("Daily");
+  const [draftKind, setDraftKind] = React.useState<"replies" | "posts">(
+    "replies",
+  );
+  const [draftQuantity, setDraftQuantity] = React.useState(5);
+  const [draftCadence, setDraftCadence] = React.useState("Daily");
   const [draftTime, setDraftTime] = React.useState("09:00");
+
+  const pendingRecommendations = readyChannels
+    .flatMap(recommendedSchedules)
+    .filter(
+      (recommendation) =>
+        !schedules.some(
+          (schedule) =>
+            schedule.channelId === recommendation.channelId &&
+            schedule.kind === recommendation.kind,
+        ),
+    );
 
   function addSchedule() {
     onChange([
@@ -1525,8 +1605,10 @@ function SchedulesView({
       {
         id: `schedule_${Date.now()}`,
         channelId: draftChannelId,
+        kind: draftKind,
         cadence: draftCadence,
         time: draftTime,
+        quantity: draftQuantity,
         enabled: true,
       },
     ]);
@@ -1574,6 +1656,38 @@ function SchedulesView({
               </div>
             </div>
             <div className="composer-field">
+              <span className="composer-label">Type</span>
+              <div className="composer-chip-row">
+                {(["replies", "posts"] as const).map((kind) => (
+                  <button
+                    className={
+                      draftKind === kind
+                        ? "composer-chip is-selected"
+                        : "composer-chip"
+                    }
+                    key={kind}
+                    type="button"
+                    onClick={() => setDraftKind(kind)}
+                  >
+                    {kind === "replies" ? "Replies" : "Posts"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="composer-field">
+              <span className="composer-label">Per run</span>
+              <input
+                className="composer-time composer-quantity"
+                type="number"
+                min={1}
+                max={50}
+                value={draftQuantity}
+                onChange={(event) =>
+                  setDraftQuantity(Number(event.target.value) || 1)
+                }
+              />
+            </div>
+            <div className="composer-field">
               <span className="composer-label">Cadence</span>
               <div className="composer-chip-row">
                 {(["Daily", "Weekdays", "Weekly"] as const).map((cadence) => (
@@ -1611,6 +1725,57 @@ function SchedulesView({
         </div>
       ) : null}
 
+      {pendingRecommendations.length ? (
+        <>
+          <p className="eyebrow">Recommended for your brand</p>
+          <div className="schedule-list">
+            {pendingRecommendations.map((recommendation) => {
+              const option = channelOption(recommendation.channelId);
+              const setup = readyChannels.find(
+                (candidate) => candidate.id === recommendation.channelId,
+              );
+              return (
+                <div
+                  className="schedule-row schedule-row-recommended"
+                  key={recommendation.id}
+                >
+                  <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
+                  <span className="schedule-copy">
+                    <strong>
+                      {scheduleLabel(
+                        recommendation,
+                        option?.name ?? recommendation.channelId,
+                      )}
+                    </strong>
+                    <em>
+                      {recommendation.cadence} at {recommendation.time}
+                      {setup?.schedule?.notes
+                        ? ` · ${setup.schedule.notes}`
+                        : " · from your channel analysis"}
+                    </em>
+                  </span>
+                  <button
+                    className="secondary channel-inline-action"
+                    type="button"
+                    onClick={() =>
+                      onChange([
+                        ...schedules,
+                        {
+                          ...recommendation,
+                          id: `schedule_${Date.now()}_${recommendation.kind}`,
+                        },
+                      ])
+                    }
+                  >
+                    Add
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
+
       {schedules.length ? (
         <div className="schedule-list">
           {schedules.map((schedule) => {
@@ -1620,7 +1785,10 @@ function SchedulesView({
                 <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
                 <span className="schedule-copy">
                   <strong>
-                    {option?.name ?? schedule.channelId} · draft replies
+                    {scheduleLabel(
+                      schedule,
+                      option?.name ?? schedule.channelId,
+                    )}
                   </strong>
                   <em>
                     {schedule.cadence} at {schedule.time} · draft-first

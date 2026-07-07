@@ -107,9 +107,32 @@ struct ProjectState {
     docs: Vec<ContextDoc>,
     channel_setups: Vec<ChannelSetup>,
     chrome_profile_id: Option<String>,
+    chrome_profile: Option<ChromeProfileInfo>,
     selected_channels: Vec<String>,
+    schedules: Vec<ScheduleConfig>,
     latest_run: Option<RunState>,
     run_activity: Vec<RunActivity>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChromeProfileInfo {
+    id: String,
+    name: String,
+    email: Option<String>,
+    avatar_data_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScheduleConfig {
+    id: String,
+    channel_id: String,
+    kind: String,
+    cadence: String,
+    time: String,
+    quantity: i64,
+    enabled: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -118,6 +141,21 @@ struct ProjectSettings {
     chrome_profile_id: Option<String>,
     #[serde(default)]
     selected_channels: Vec<String>,
+    #[serde(default)]
+    schedules: Vec<ScheduleConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChannelScheduleRecommendation {
+    #[serde(default)]
+    replies_per_day: Option<i64>,
+    #[serde(default)]
+    posts_per_week: Option<i64>,
+    #[serde(default)]
+    best_time: Option<String>,
+    #[serde(default)]
+    notes: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +212,7 @@ struct ChannelSetup {
     chrome_profile_id: Option<String>,
     check_method: Option<String>,
     checked_at: Option<String>,
+    schedule: Option<ChannelScheduleRecommendation>,
     path: String,
     files: Vec<String>,
 }
@@ -378,6 +417,7 @@ pub fn run() {
             list_chrome_profiles,
             select_chrome_profile,
             set_selected_channels,
+            set_schedules,
             verify_channel_login,
             run_channel_analysis,
             open_project_in_codex,
@@ -493,13 +533,19 @@ fn load_project(project_path: String) -> AppResult<ProjectState> {
         .transpose()?
         .unwrap_or_default();
     let settings = read_project_settings(&path);
+    let chrome_profile = settings
+        .chrome_profile_id
+        .as_deref()
+        .and_then(read_chrome_profile_info);
     Ok(ProjectState {
         config,
         agent_provider: selected_provider_status()?,
         docs: read_docs(&path)?,
         channel_setups: read_channel_setups(&path),
         chrome_profile_id: settings.chrome_profile_id,
+        chrome_profile,
         selected_channels: settings.selected_channels,
+        schedules: settings.schedules,
         latest_run,
         run_activity,
     })
@@ -574,6 +620,18 @@ fn set_selected_channels(
     }
     let mut settings = read_project_settings(&path);
     settings.selected_channels = channel_ids;
+    write_project_settings(&path, &settings)?;
+    load_project(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn set_schedules(project_path: String, schedules: Vec<ScheduleConfig>) -> AppResult<ProjectState> {
+    let path = PathBuf::from(project_path);
+    for schedule in &schedules {
+        channel_def(&schedule.channel_id)?;
+    }
+    let mut settings = read_project_settings(&path);
+    settings.schedules = schedules;
     write_project_settings(&path, &settings)?;
     load_project(path.to_string_lossy().to_string())
 }
@@ -980,6 +1038,29 @@ fn read_chrome_profiles() -> AppResult<Vec<ChromeProfile>> {
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
     Ok(profiles)
+}
+
+fn read_chrome_profile_info(profile_id: &str) -> Option<ChromeProfileInfo> {
+    let user_data_dir = chrome_user_data_dir().ok()?;
+    let local_state: Value = read_json(&user_data_dir.join("Local State")).ok()?;
+    let profile = local_state
+        .pointer(&format!("/profile/info_cache/{profile_id}"))?
+        .clone();
+    Some(ChromeProfileInfo {
+        id: profile_id.to_string(),
+        name: profile
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(profile_id)
+            .to_string(),
+        email: profile
+            .get("user_name")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string),
+        avatar_data_url: chrome_profile_avatar_data_url(&user_data_dir, profile_id),
+    })
 }
 
 fn chrome_profile_avatar_path(user_data_dir: &Path, profile_id: &str) -> Option<String> {
@@ -1937,6 +2018,7 @@ fn read_channel_setup(project_path: &Path, channel: &ChannelDef) -> ChannelSetup
             chrome_profile_id: None,
             check_method: None,
             checked_at: None,
+            schedule: None,
             path: channel_path.to_string_lossy().to_string(),
             files: Vec::new(),
         };
@@ -1976,6 +2058,7 @@ fn read_channel_setup(project_path: &Path, channel: &ChannelDef) -> ChannelSetup
         chrome_profile_id: channel_status.chrome_profile_id,
         check_method: channel_status.check_method,
         checked_at: channel_status.checked_at,
+        schedule: read_json(&channel_path.join("schedule.json")).ok(),
         path: channel_path.to_string_lossy().to_string(),
         files,
     }
@@ -2539,6 +2622,7 @@ Then rewrite only these files:
 - `.gtm-agent/channels/{channel_id}/rules.md`
 - `.gtm-agent/channels/{channel_id}/examples.md`
 - `.gtm-agent/channels/{channel_id}/voice.md`
+- `.gtm-agent/channels/{channel_id}/schedule.json`
 - `.gtm-agent/channels/{channel_id}/status.json`
 
 Use the global brand files as base context:
@@ -2563,7 +2647,17 @@ Base this on real posts and replies you read during inspection. Add sections for
 4. `rules.md`
 Write the draft-first operating rules: the agent may find opportunities and draft replies; public posting requires explicit user approval. Include guardrails for spam, unsupported claims, disclosure when mentioning the product, and when not to reply.
 
-5. `status.json`
+5. `schedule.json`
+Recommend an operating cadence for this channel so the user does not have to plan it manually. Derive it from the ICP and channel recommendations in `marketing-strategy.md`, the category dynamics in `competitor-analysis.md`, and how active this specific account and channel realistically are. Write valid JSON with this exact shape:
+{{
+  "repliesPerDay": number,
+  "postsPerWeek": number,
+  "bestTime": "HH:MM",
+  "notes": "one or two sentences explaining why this cadence fits the ICP and channel"
+}}
+Choose numbers you would actually recommend for this brand on this channel: high enough to build presence with the ICP, low enough to stay high-quality and non-spammy for this channel's culture. Do not copy numbers from other channels; reason per channel. `bestTime` is the local time of day when the ICP is most active on this channel.
+
+6. `status.json`
 Write valid JSON with this exact shape:
 {{
   "accountStatus": "authenticated",
@@ -3431,12 +3525,24 @@ mod tests {
             &ProjectSettings {
                 chrome_profile_id: Some("Profile 1".into()),
                 selected_channels: vec!["x".into(), "hacker-news".into()],
+                schedules: vec![ScheduleConfig {
+                    id: "schedule_1".into(),
+                    channel_id: "x".into(),
+                    kind: "replies".into(),
+                    cadence: "Daily".into(),
+                    time: "09:00".into(),
+                    quantity: 10,
+                    enabled: true,
+                }],
             },
         )
         .unwrap();
         let settings = read_project_settings(&project_path);
         assert_eq!(settings.chrome_profile_id.as_deref(), Some("Profile 1"));
         assert_eq!(settings.selected_channels, vec!["x", "hacker-news"]);
+        assert_eq!(settings.schedules.len(), 1);
+        assert_eq!(settings.schedules[0].channel_id, "x");
+        assert_eq!(settings.schedules[0].quantity, 10);
 
         fs::remove_dir_all(project_path).unwrap();
     }

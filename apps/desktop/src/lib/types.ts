@@ -48,6 +48,13 @@ export interface RunActivity {
   message: string;
 }
 
+export interface ChannelScheduleRecommendation {
+  repliesPerDay?: number | null;
+  postsPerWeek?: number | null;
+  bestTime?: string | null;
+  notes?: string | null;
+}
+
 export interface ChannelSetup {
   id: string;
   name: string;
@@ -62,8 +69,26 @@ export interface ChannelSetup {
   chromeProfileId?: string | null;
   checkMethod?: string | null;
   checkedAt?: string | null;
+  schedule?: ChannelScheduleRecommendation | null;
   path: string;
   files: string[];
+}
+
+export interface ChromeProfileInfo {
+  id: string;
+  name: string;
+  email?: string | null;
+  avatarDataUrl?: string | null;
+}
+
+export interface ScheduleConfig {
+  id: string;
+  channelId: string;
+  kind: "replies" | "posts";
+  cadence: string;
+  time: string;
+  quantity: number;
+  enabled: boolean;
 }
 
 export interface ChromeProfile {
@@ -85,7 +110,9 @@ export interface ProjectState {
   docs: ContextDoc[];
   channelSetups: ChannelSetup[];
   chromeProfileId?: string | null;
+  chromeProfile?: ChromeProfileInfo | null;
   selectedChannels: string[];
+  schedules: ScheduleConfig[];
   latestRun?: RunState | null;
   runActivity: RunActivity[];
 }

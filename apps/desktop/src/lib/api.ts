@@ -5,6 +5,7 @@ import type {
   ContextDoc,
   ProjectState,
   RunState,
+  ScheduleConfig,
 } from "./types";
 
 function hasTauriBridge() {
@@ -139,6 +140,9 @@ export const api = {
       projectPath,
       channelIds,
     });
+  },
+  setSchedules(projectPath: string, schedules: ScheduleConfig[]) {
+    return call<ProjectState>("set_schedules", { projectPath, schedules });
   },
   verifyChannelLogin(
     projectPath: string,
