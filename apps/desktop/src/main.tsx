@@ -269,10 +269,6 @@ function App() {
           setWebsiteUrl("");
           setStep("url");
         }}
-        onAddChannels={() => {
-          setError(null);
-          setStep("channels");
-        }}
       />
     );
   }
@@ -1209,7 +1205,8 @@ type WorkspaceView =
   | { kind: "inbox" }
   | { kind: "schedules" }
   | { kind: "brand" }
-  | { kind: "channel"; channelId: string };
+  | { kind: "channel"; channelId: string }
+  | { kind: "add-channels" };
 
 function accountDisplayName(project: ProjectState) {
   const email = project.chromeProfile?.email;
@@ -1254,14 +1251,12 @@ function Workspace({
   error,
   onError,
   onNewWebsite,
-  onAddChannels,
   onProjectUpdate,
 }: {
   project: ProjectState;
   error: string | null;
   onError: (error: string | null) => void;
   onNewWebsite: () => void;
-  onAddChannels: () => void;
   onProjectUpdate: (project: ProjectState) => void;
 }) {
   const [view, setView] = React.useState<WorkspaceView>({ kind: "inbox" });
@@ -1392,7 +1387,7 @@ function Workspace({
               type="button"
               onClick={() => {
                 setOpenMenu(null);
-                onAddChannels();
+                setView({ kind: "add-channels" });
               }}
             >
               <span className="dropdown-plus" aria-hidden="true">
@@ -1507,6 +1502,19 @@ function Workspace({
             />
           ) : view.kind === "brand" ? (
             <BrandView project={project} onOpenDoc={setSelectedDoc} />
+          ) : view.kind === "add-channels" ? (
+            <AddChannelsView
+              project={project}
+              onError={onError}
+              onProjectUpdate={onProjectUpdate}
+              onDone={(channelId) =>
+                setView(
+                  channelId
+                    ? { kind: "channel", channelId }
+                    : { kind: "inbox" },
+                )
+              }
+            />
           ) : (
             <ChannelView
               project={project}
@@ -1523,6 +1531,161 @@ function Workspace({
         <DocModal doc={selectedDoc} onClose={() => setSelectedDoc(null)} />
       ) : null}
     </main>
+  );
+}
+
+function AddChannelsView({
+  project,
+  onError,
+  onProjectUpdate,
+  onDone,
+}: {
+  project: ProjectState;
+  onError: (error: string | null) => void;
+  onProjectUpdate: (project: ProjectState) => void;
+  onDone: (channelId?: string) => void;
+}) {
+  const [workingId, setWorkingId] = React.useState<string | null>(null);
+
+  async function addChannel(option: ChannelOption) {
+    onError(null);
+    setWorkingId(option.id);
+    try {
+      const next = await api.setSelectedChannels(project.config.path, [
+        ...project.selectedChannels,
+        option.id,
+      ]);
+      onProjectUpdate(next);
+      const setup = next.channelSetups.find(
+        (candidate) => candidate.id === option.id,
+      );
+      if (
+        setup?.loginStatus === "verified" ||
+        setup?.accountStatus === "authenticated"
+      ) {
+        await runAnalysis(option.id);
+        return;
+      }
+      const verified = await api.verifyChannelLogin(
+        project.config.path,
+        option.id,
+        project.chromeProfileId,
+      );
+      onProjectUpdate(verified);
+      const refreshed = verified.channelSetups.find(
+        (candidate) => candidate.id === option.id,
+      );
+      if (
+        refreshed?.loginStatus === "verified" ||
+        refreshed?.accountStatus === "authenticated"
+      ) {
+        await runAnalysis(option.id);
+      } else {
+        await api.openChannelLogin(option.id);
+      }
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setWorkingId(null);
+    }
+  }
+
+  async function runAnalysis(channelId: string) {
+    onError(null);
+    setWorkingId(channelId);
+    try {
+      await api.runChannelAnalysis(project.config.path, [channelId]);
+      onProjectUpdate(await api.loadProject(project.config.path));
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setWorkingId(null);
+    }
+  }
+
+  return (
+    <div className="home-view">
+      <div className="home-view-head">
+        <div>
+          <h2>Add channels</h2>
+          <p>
+            Choose where {project.config.name} should show up. GTM Agent checks
+            each account in the selected Chrome profile.
+          </p>
+        </div>
+        <button type="button" onClick={() => onDone()}>
+          Done
+        </button>
+      </div>
+
+      <div className="channel-grid">
+        {CHANNEL_OPTIONS.map((option) => {
+          const setup = project.channelSetups.find(
+            (candidate) => candidate.id === option.id,
+          );
+          const isReady = setup?.analysisStatus === "ready";
+          const isSelected = project.selectedChannels.includes(option.id);
+          const isWorking = workingId === option.id;
+          const statusText = isReady
+            ? "Added"
+            : setup?.accountStatus === "authenticated"
+              ? "Account detected"
+              : isSelected
+                ? "Selected"
+                : "Not connected";
+
+          return (
+            <article
+              className={`channel-card ${isSelected ? "is-selected" : ""}`}
+              key={option.id}
+            >
+              <div className="channel-card-head">
+                <UrlIcon websiteUrl={option.faviconUrl} />
+                <div>
+                  <strong className="channel-card-title">{option.name}</strong>
+                  <span
+                    className={
+                      isReady ? "channel-status is-success" : "channel-status"
+                    }
+                  >
+                    {isReady ? "● " : "○ "}
+                    {statusText}
+                  </span>
+                </div>
+              </div>
+              <p className="channel-card-body">{option.description}</p>
+              {isReady ? (
+                <button
+                  className="secondary channel-inline-action"
+                  type="button"
+                  disabled={isWorking}
+                  onClick={() => onDone(option.id)}
+                >
+                  View
+                </button>
+              ) : (
+                <button
+                  className="channel-inline-action"
+                  type="button"
+                  disabled={isWorking}
+                  onClick={() => void addChannel(option)}
+                >
+                  {isWorking ? "Checking…" : isSelected ? "Analyze" : "Add"}
+                </button>
+              )}
+            </article>
+          );
+        })}
+      </div>
+
+      <button
+        className="secondary add-channels-done"
+        type="button"
+        onClick={() => onDone()}
+      >
+        Back to workspace
+      </button>
+    </div>
   );
 }
 

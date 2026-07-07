@@ -532,6 +532,7 @@ fn load_project(project_path: String) -> AppResult<ProjectState> {
         .map(|run| read_run_activity(&PathBuf::from(&run.log_path)))
         .transpose()?
         .unwrap_or_default();
+    migrate_channel_dirs(&path)?;
     let settings = read_project_settings(&path);
     let chrome_profile = settings
         .chrome_profile_id
@@ -560,10 +561,7 @@ fn load_channel_context_doc(
     let channel = channel_def(&channel_id)?;
     let (key, file_name, title) = channel_context_doc(&file_name)
         .ok_or_else(|| AppError::Invalid("unsupported channel file".into()))?;
-    let path = PathBuf::from(project_path)
-        .join(".gtm-agent/channels")
-        .join(channel.id)
-        .join(file_name);
+    let path = channel_path(&PathBuf::from(project_path), channel.id).join(file_name);
     Ok(ContextDoc {
         key: format!("{}_{key}", channel.id.replace('-', "_")),
         file_name: file_name.into(),
@@ -2003,7 +2001,7 @@ fn read_channel_setups(project_path: &Path) -> Vec<ChannelSetup> {
 }
 
 fn read_channel_setup(project_path: &Path, channel: &ChannelDef) -> ChannelSetup {
-    let channel_path = project_path.join(".gtm-agent/channels").join(channel.id);
+    let channel_path = channel_path(project_path, channel.id);
     if !channel_path.exists() {
         return ChannelSetup {
             id: channel.id.into(),
@@ -2065,7 +2063,7 @@ fn read_channel_setup(project_path: &Path, channel: &ChannelDef) -> ChannelSetup
 }
 
 fn write_channel_setup(project_path: &Path, channel: &ChannelDef) -> AppResult<()> {
-    let channel_path = project_path.join(".gtm-agent/channels").join(channel.id);
+    let channel_path = channel_path(project_path, channel.id);
     fs::create_dir_all(channel_path.join("drafts"))?;
     let name = channel.name;
 
@@ -2106,10 +2104,7 @@ fn write_channel_setup(project_path: &Path, channel: &ChannelDef) -> AppResult<(
 }
 
 fn read_channel_status(project_path: &Path, channel_id: &str) -> ChannelStatus {
-    let path = project_path
-        .join(".gtm-agent/channels")
-        .join(channel_id)
-        .join("status.json");
+    let path = channel_path(project_path, channel_id).join("status.json");
     if path.exists() {
         if let Ok(status) = read_json(&path) {
             return status;
@@ -2124,10 +2119,7 @@ fn write_channel_status(
     status: ChannelStatus,
 ) -> AppResult<()> {
     write_json_pretty(
-        &project_path
-            .join(".gtm-agent/channels")
-            .join(channel_id)
-            .join("status.json"),
+        &channel_path(project_path, channel_id).join("status.json"),
         &status,
     )
 }
@@ -2135,13 +2127,8 @@ fn write_channel_status(
 fn read_channel_account_label(project_path: &Path, channel_id: &str) -> Option<String> {
     let status = read_channel_status(project_path, channel_id);
     status.account_label.or(status.account_handle).or_else(|| {
-        let profile = fs::read_to_string(
-            project_path
-                .join(".gtm-agent/channels")
-                .join(channel_id)
-                .join("profile.md"),
-        )
-        .unwrap_or_default();
+        let profile = fs::read_to_string(channel_path(project_path, channel_id).join("profile.md"))
+            .unwrap_or_default();
         profile
             .lines()
             .find_map(|line| line.strip_prefix("- Account:").map(str::trim))
@@ -2160,6 +2147,36 @@ fn read_project_settings(project_path: &Path) -> ProjectSettings {
 
 fn write_project_settings(project_path: &Path, settings: &ProjectSettings) -> AppResult<()> {
     write_json_pretty(&project_settings_path(project_path), settings)
+}
+
+fn channel_path(project_path: &Path, channel_id: &str) -> PathBuf {
+    project_path.join("channels").join(channel_id)
+}
+
+fn migrate_channel_dirs(project_path: &Path) -> AppResult<()> {
+    let legacy = project_path.join(".gtm-agent/channels");
+    if !legacy.exists() {
+        return Ok(());
+    }
+    let current = project_path.join("channels");
+    fs::create_dir_all(&current)?;
+    for entry in fs::read_dir(&legacy)? {
+        let entry = entry?;
+        let source = entry.path();
+        if !source.is_dir() {
+            continue;
+        }
+        let channel_id = source.file_name().unwrap_or_default();
+        let target = current.join(&channel_id);
+        if target.exists() {
+            continue;
+        }
+        fs::rename(&source, &target)?;
+    }
+    if legacy.read_dir()?.next().is_none() {
+        fs::remove_dir(&legacy)?;
+    }
+    Ok(())
 }
 
 fn write_if_missing(path: &Path, content: &str) -> AppResult<()> {
@@ -2618,12 +2635,12 @@ Configure the {channel_name} channel for draft-first outreach. Do not post, like
 The app has already verified the selected Chrome profile has an authenticated {channel_name} session. Do not spend the run checking whether login exists. {browser_instructions}
 
 Then rewrite only these files:
-- `.gtm-agent/channels/{channel_id}/profile.md`
-- `.gtm-agent/channels/{channel_id}/rules.md`
-- `.gtm-agent/channels/{channel_id}/examples.md`
-- `.gtm-agent/channels/{channel_id}/voice.md`
-- `.gtm-agent/channels/{channel_id}/schedule.json`
-- `.gtm-agent/channels/{channel_id}/status.json`
+- `channels/{channel_id}/profile.md`
+- `channels/{channel_id}/rules.md`
+- `channels/{channel_id}/examples.md`
+- `channels/{channel_id}/voice.md`
+- `channels/{channel_id}/schedule.json`
+- `channels/{channel_id}/status.json`
 
 Use the global brand files as base context:
 - `product-information.md`
@@ -3420,7 +3437,7 @@ mod tests {
         }
 
         for channel in &CHANNELS {
-            let channel_path = project_path.join(".gtm-agent/channels").join(channel.id);
+            let channel_path = channel_path(&project_path, channel.id);
             for file_name in [
                 "profile.md",
                 "rules.md",
@@ -3450,7 +3467,7 @@ mod tests {
         }
 
         fs::write(
-            project_path.join(".gtm-agent/channels/x/voice.md"),
+            channel_path(&project_path, "x").join("voice.md"),
             "# X Voice\n\n## Posting voice\n\nShort and direct.\n",
         )
         .unwrap();
@@ -3497,7 +3514,7 @@ mod tests {
             true,
         );
         assert!(prompt.contains("`chrome-devtools` MCP server"));
-        assert!(prompt.contains(".gtm-agent/channels/reddit/profile.md"));
+        assert!(prompt.contains("channels/reddit/profile.md"));
         assert!(prompt.contains("https://www.reddit.com/"));
 
         let fallback_prompt = channel_analysis_prompt(

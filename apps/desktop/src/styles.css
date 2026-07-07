@@ -1533,6 +1533,10 @@ input:focus {
   width: 64px;
 }
 
+.add-channels-done {
+  margin-top: 20px;
+}
+
 .schedule-row-recommended {
   border-style: dashed;
   background: #fcfcfc;
