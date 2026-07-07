@@ -1831,6 +1831,16 @@ fn document_has_body_content(content: &str, title: &str) -> bool {
     })
 }
 
+fn file_has_body_content(path: &Path) -> bool {
+    fs::read_to_string(path)
+        .map(|content| {
+            content
+                .lines()
+                .any(|line| !line.trim().is_empty() && !line.trim_start().starts_with("# "))
+        })
+        .unwrap_or(false)
+}
+
 fn source_docs_completion_event_time(
     project_path: &Path,
     run_started_at: &str,
@@ -1949,7 +1959,7 @@ fn read_channel_setup(project_path: &Path, channel: &ChannelDef) -> ChannelSetup
     };
     let files = ["profile.md", "rules.md", "examples.md", "voice.md"]
         .iter()
-        .filter(|file_name| channel_path.join(file_name).exists())
+        .filter(|file_name| file_has_body_content(&channel_path.join(file_name)))
         .map(|file_name| (*file_name).to_string())
         .collect::<Vec<_>>();
 
@@ -1978,19 +1988,19 @@ fn write_channel_setup(project_path: &Path, channel: &ChannelDef) -> AppResult<(
 
     write_if_missing(
         &channel_path.join("profile.md"),
-        &format!("# {name} Channel Profile\n\n## Connection\n\n- Mode: Existing Chrome session\n- Posting: Browser-assisted after explicit user approval\n- API: Not required for MVP\n\n## Account voice to learn\n\nThe agent should learn this from the signed-in {name} account before recurring runs:\n\n- Profile bio and positioning\n- Recent posts and replies\n- Topics the account naturally discusses\n- Phrases, pacing, and formatting that sound native to the account\n- Posts or replies the user marks as strong examples\n\n## Operating posture\n\nUse global brand voice as the base, then adapt it for {name}: concise, specific, and conversational. Avoid generic launch hype and avoid posting without review.\n"),
+        &format!("# {name} Profile\n\n"),
     )?;
     write_if_missing(
         &channel_path.join("rules.md"),
-        &format!("# {name} Channel Rules\n\n## Approval\n\n- Manual approval is required before every post or reply.\n- The agent may search, rank opportunities, and draft replies.\n- The agent may open Chrome and prepare a post only after the user confirms.\n- The final public action must be visible to the user before submission.\n\n## Draft standards\n\n- Lead with the problem or observation, not a pitch.\n- Prefer useful replies to cold promotion.\n- Use product mentions only when the thread context makes them natural.\n- Do not make unsupported claims beyond the brand source documents.\n- Save strong approved posts back to `examples.md`.\n\n## Avoid\n\n- Spammy reply chains\n- Generic AI/productivity claims\n- Engagement bait\n- Posting into threads where the product is not relevant\n"),
+        &format!("# {name} Rules\n\n"),
     )?;
     write_if_missing(
         &channel_path.join("examples.md"),
-        &format!("# {name} Examples\n\nUse this file as the channel-specific memory for what good looks like.\n\n## Strong examples\n\n_Add approved posts and replies here after the user marks them as good._\n\n## Avoid examples\n\n_Add drafts or posts that felt too salesy, off-tone, or low-signal._\n"),
+        &format!("# {name} Examples\n\n"),
     )?;
     write_if_missing(
         &channel_path.join("voice.md"),
-        &format!("# {name} Account Voice\n\n_Pending account analysis._\n\nThe agent should replace this with account-specific voice guidance after reviewing the signed-in {name} account, recent posts, replies, and strong examples.\n"),
+        &format!("# {name} Voice\n\n"),
     )?;
     write_if_missing(
         &channel_path.join("searches.md"),
@@ -2492,9 +2502,9 @@ fn channel_analysis_prompt(
         .as_deref()
         .unwrap_or("chrome_cookie_probe");
     let channel_inspection = match channel.id {
-        "x" => "Inspect the visible profile at x.com: account name/handle, bio, recent posts, replies, and account-specific voice.",
-        "reddit" => "Inspect the signed-in Reddit account: username, karma, active subreddits, recent posts, and comments (reddit.com/user/<username>).",
-        "hacker-news" => "Inspect the signed-in Hacker News account: username, karma, about text, recent submissions, and comments (news.ycombinator.com/user?id=<username>).",
+        "x" => "Inspect the account thoroughly, not just the profile header: 1) open the profile page and capture handle, display name, bio, and pinned post; 2) read at least 15 recent original posts from the profile timeline; 3) open the Replies tab (x.com/<handle>/with_replies) and read at least 15 recent replies, because reply tone is where the real voice lives; scroll to load more content when needed. Capture concrete evidence: recurring topics, typical post length, sentence rhythm, capitalization and punctuation habits, emoji/hashtag usage (or absence), how the account opens replies, how it disagrees, how casual or direct it is with strangers, and any recognizable phrasing patterns.",
+        "reddit" => "Inspect the account thoroughly: open reddit.com/user/<username>, capture username, karma, and active subreddits, then read at least 15 recent comments and posts (use the Comments tab; scroll to load more). Capture concrete evidence: which communities the account participates in, typical comment length, tone with strangers, how it handles disagreement, formatting habits, and recurring phrasing.",
+        "hacker-news" => "Inspect the account thoroughly: open news.ycombinator.com/user?id=<username> for username, karma, and about text, then open the user's comments (news.ycombinator.com/threads?id=<username>) and submissions and read at least 15 recent items. Capture concrete evidence: typical comment length, technical depth, tone in debates, and recurring phrasing.",
         _ => "Inspect the signed-in account: profile, recent posts, and replies.",
     };
     let browser_instructions = if has_browser_mcp {
@@ -2537,19 +2547,21 @@ Use the global brand files as base context:
 - `competitor-analysis.md`
 - `brand-voice.md`
 
+The four Markdown files start as empty skeletons with only a heading. Write them completely from your inspection and the brand context.
+
 File requirements:
 
 1. `profile.md`
-Capture the signed-in account name/handle, visible bio, positioning, recurring topics, audience clues, and what kind of {channel_name} activity fits the account. Include a line formatted exactly as `- Account: @handle or display name` when known.
+Capture the signed-in account name/handle, visible bio, pinned post, positioning, recurring topics, audience clues, follower context if visible, and what kind of {channel_name} activity fits the account. Include a line formatted exactly as `- Account: @handle or display name` when known.
 
 2. `voice.md`
-Write account-specific voice guidance based on visible posts/replies: tone, pacing, sentence style, vocabulary, formatting habits, and how the global brand voice should adapt for {channel_name}.
+This is the most important file; ground every claim in posts/replies you actually read. Structure it with these sections: `## Posting voice` (tone, topics, typical length, sentence rhythm for original posts), `## Reply voice` (how the account actually replies to strangers: how it opens, how direct it is, how it disagrees, typical reply length), `## Formatting habits` (capitalization, punctuation, emoji, hashtags, line breaks, threads), `## Vocabulary` (words and phrasings the account really uses, plus words that would feel off), and `## Brand adaptation` (how the global brand voice should bend toward this account's natural style for {channel_name}).
 
 3. `examples.md`
-Capture only useful patterns, not private data. Include strong post/reply examples as short paraphrased patterns unless quoting is necessary. Add sections for `Strong examples`, `Reusable patterns`, and `Avoid`.
+Base this on real posts and replies you read during inspection. Add sections for `Strong examples` (short paraphrases of actual strong posts/replies with a note on why each works), `Reusable patterns` (repeatable structures observed in the account's writing), and `Avoid` (patterns that would feel off-voice for this account). Do not include private data.
 
 4. `rules.md`
-Keep the draft-first operating rules: the agent may find opportunities and draft replies; public posting requires explicit user approval. Include guardrails for spam, unsupported claims, and when not to reply.
+Write the draft-first operating rules: the agent may find opportunities and draft replies; public posting requires explicit user approval. Include guardrails for spam, unsupported claims, disclosure when mentioning the product, and when not to reply.
 
 5. `status.json`
 Write valid JSON with this exact shape:
@@ -3340,9 +3352,17 @@ mod tests {
             assert_eq!(setup.account_status, ChannelAccountStatus::NotConfigured);
             assert_eq!(setup.login_status, ChannelLoginStatus::Unknown);
             assert_eq!(setup.analysis_status, ChannelAnalysisStatus::NotStarted);
-            assert!(setup.files.contains(&"voice.md".into()));
-            assert!(!setup.files.contains(&"drafts/schema.md".into()));
+            assert!(setup.files.is_empty(), "skeleton docs should not count");
         }
+
+        fs::write(
+            project_path.join(".gtm-agent/channels/x/voice.md"),
+            "# X Voice\n\n## Posting voice\n\nShort and direct.\n",
+        )
+        .unwrap();
+        let setups = read_channel_setups(&project_path);
+        assert!(setups[0].files.contains(&"voice.md".into()));
+        assert!(!setups[0].files.contains(&"profile.md".into()));
 
         fs::remove_dir_all(project_path).unwrap();
     }

@@ -602,6 +602,7 @@ function BrandAnalysisStep({
   onContinue: () => void;
 }) {
   const [isLogOpen, setIsLogOpen] = React.useState(false);
+  const [selectedDoc, setSelectedDoc] = React.useState<ContextDoc | null>(null);
   const logRef = React.useRef<HTMLDivElement | null>(null);
   const run = project.latestRun;
   const isRunning =
@@ -654,6 +655,29 @@ function BrandAnalysisStep({
         ))}
       </div>
 
+      <div className="channel-analysis-files" aria-label="Source documents">
+        {project.docs.map((doc) => {
+          const ready = hasDocumentContent(doc);
+          return (
+            <button
+              className="channel-file-chip"
+              key={doc.key}
+              type="button"
+              onClick={() => setSelectedDoc(doc)}
+              disabled={!ready}
+            >
+              <span className="document-icon" aria-hidden="true">
+                <svg viewBox="0 0 16 16" focusable="false">
+                  <path d="M4 1.75h5.2L12.75 5.3v8.95H4z" />
+                  <path d="M9 1.9v3.6h3.55M6 8h4M6 10.5h4" />
+                </svg>
+              </span>
+              {doc.title}
+            </button>
+          );
+        })}
+      </div>
+
       {runError ? <p className="run-error">{runError}</p> : null}
       {isStalled && !runError ? (
         <p className="run-error">
@@ -700,6 +724,10 @@ function BrandAnalysisStep({
             )}
           </div>
         </div>
+      ) : null}
+
+      {selectedDoc ? (
+        <DocModal doc={selectedDoc} onClose={() => setSelectedDoc(null)} />
       ) : null}
     </div>
   );
@@ -966,7 +994,7 @@ function ChannelsStep({
                     ? "Checking..."
                     : detected
                       ? "Account detected"
-                      : "No account detected"}
+                      : "No account"}
                 </span>
                 {!detected ? (
                   <>
@@ -1083,23 +1111,18 @@ function ChannelAnalysisStep({
               <div className="channel-analysis-head">
                 <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
                 <strong>{setup.name}</strong>
-                <span
-                  className={[
-                    "channel-analysis-chip",
-                    isReady ? "is-ready" : "",
-                    isFailed ? "is-failed" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                >
-                  {isRunning
-                    ? "Analyzing..."
-                    : isReady
-                      ? "Ready"
-                      : isFailed
-                        ? "Failed"
-                        : "Queued"}
-                </span>
+                {isReady || isFailed ? (
+                  <span
+                    className={[
+                      "channel-analysis-chip",
+                      isReady ? "is-ready" : "is-failed",
+                    ].join(" ")}
+                  >
+                    {isReady ? "Ready" : "Failed"}
+                  </span>
+                ) : (
+                  <span />
+                )}
               </div>
               <div className="channel-analysis-files">
                 {CHANNEL_DOCS.map((doc) => {

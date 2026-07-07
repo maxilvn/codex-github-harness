@@ -782,12 +782,21 @@ input:focus {
 
 .channel-select-row {
   display: grid;
-  gap: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding-right: 13px;
   border: 1px solid #e7e7e7;
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 1px 3px #0000000a;
-  transition: border-color 200ms ease;
+  transition:
+    border-color 200ms ease,
+    background 200ms ease;
+}
+
+.channel-select-row:hover {
+  border-color: #d2d2d2;
 }
 
 .channel-select-row.is-selected {
@@ -800,11 +809,11 @@ input:focus {
   grid-template-columns: auto auto minmax(0, 1fr);
   align-items: center;
   gap: 12px;
-  min-height: 60px;
+  min-height: 64px;
   height: auto;
   border: 0;
-  border-radius: 8px 8px 0 0;
-  padding: 11px 13px 8px;
+  border-radius: 8px 0 0 8px;
+  padding: 11px 0 11px 13px;
   color: #171717;
   background: transparent;
   text-align: left;
@@ -874,7 +883,7 @@ input:focus {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 13px 11px 43px;
+  white-space: nowrap;
 }
 
 .channel-account-status {
