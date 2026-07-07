@@ -249,7 +249,18 @@ function App() {
   }
 
   if (step === "workspace" && project) {
-    return <Workspace project={project} error={error} onError={setError} />;
+    return (
+      <Workspace
+        project={project}
+        error={error}
+        onError={setError}
+        onNewWebsite={() => {
+          setError(null);
+          setWebsiteUrl("");
+          setStep("url");
+        }}
+      />
+    );
   }
 
   const stepIndex = ONBOARDING_STEPS.indexOf(step as OnboardingStep);
@@ -1180,19 +1191,50 @@ function ChannelAnalysisStep({
   );
 }
 
+type WorkspaceView =
+  | { kind: "inbox" }
+  | { kind: "schedules" }
+  | { kind: "brand" }
+  | { kind: "channel"; channelId: string };
+
+type Schedule = {
+  id: string;
+  channelId: string;
+  cadence: "Daily" | "Weekdays" | "Weekly";
+  time: string;
+  enabled: boolean;
+};
+
+function DocIcon() {
+  return (
+    <span className="document-icon" aria-hidden="true">
+      <svg viewBox="0 0 16 16" focusable="false">
+        <path d="M4 1.75h5.2L12.75 5.3v8.95H4z" />
+        <path d="M9 1.9v3.6h3.55M6 8h4M6 10.5h4" />
+      </svg>
+    </span>
+  );
+}
+
 function Workspace({
   project,
   error,
   onError,
+  onNewWebsite,
 }: {
   project: ProjectState;
   error: string | null;
   onError: (error: string | null) => void;
+  onNewWebsite: () => void;
 }) {
+  const [view, setView] = React.useState<WorkspaceView>({ kind: "inbox" });
+  const [openMenu, setOpenMenu] = React.useState<"brand" | "account" | null>(
+    null,
+  );
   const [selectedDoc, setSelectedDoc] = React.useState<ContextDoc | null>(null);
+  const [schedules, setSchedules] = React.useState<Schedule[]>([]);
+  const [isComposerOpen, setIsComposerOpen] = React.useState(false);
   const host = displayHost(project.config.websiteUrl);
-  const productDescription = extractProductDescription(project.docs);
-  const competitors = extractCompetitors(project.docs, host);
   const readyChannels = project.channelSetups.filter(
     (setup) =>
       project.selectedChannels.includes(setup.id) &&
@@ -1215,130 +1257,533 @@ function Workspace({
   }
 
   return (
-    <main className="shell">
-      {error ? <div className="error">{error}</div> : null}
-      <section className="workspace workspace-final">
-        <div className="analysis-grid">
-          <aside className="panel documents-card" aria-label="Company context">
-            <div className="company-lockup">
+    <main className="home">
+      <header className="home-topbar">
+        <button
+          className="brand-switcher"
+          type="button"
+          onClick={() => setOpenMenu(openMenu === "brand" ? null : "brand")}
+          aria-expanded={openMenu === "brand"}
+        >
+          <UrlIcon websiteUrl={project.config.websiteUrl} />
+          <strong>{project.config.name}</strong>
+          <span className="menu-chevron" aria-hidden="true">
+            ⌄
+          </span>
+        </button>
+
+        <button
+          className="account-chip"
+          type="button"
+          onClick={() => setOpenMenu(openMenu === "account" ? null : "account")}
+          aria-expanded={openMenu === "account"}
+        >
+          <span className="account-avatar" aria-hidden="true">
+            {project.config.name[0]?.toUpperCase() ?? "A"}
+          </span>
+          <span className="menu-chevron" aria-hidden="true">
+            ⌄
+          </span>
+        </button>
+
+        {openMenu ? (
+          <button
+            className="menu-backdrop"
+            type="button"
+            aria-label="Close menu"
+            onClick={() => setOpenMenu(null)}
+          />
+        ) : null}
+
+        {openMenu === "brand" ? (
+          <nav className="dropdown dropdown-brand" aria-label="Brand menu">
+            <p className="dropdown-heading">Brand</p>
+            <div className="dropdown-item is-current">
               <UrlIcon websiteUrl={project.config.websiteUrl} />
-              <div>
+              <span className="dropdown-item-copy">
                 <strong>{project.config.name}</strong>
-              </div>
+                <em>{host}</em>
+              </span>
+              <span className="dropdown-check" aria-hidden="true">
+                ✓
+              </span>
             </div>
+            <button
+              className="dropdown-item"
+              type="button"
+              onClick={() => {
+                setView({ kind: "brand" });
+                setOpenMenu(null);
+              }}
+            >
+              <DocIcon />
+              <span className="dropdown-item-copy">
+                <strong>Brand analysis</strong>
+              </span>
+            </button>
+            <div className="dropdown-divider" />
+            <button
+              className="dropdown-item"
+              type="button"
+              onClick={() => {
+                setOpenMenu(null);
+                onNewWebsite();
+              }}
+            >
+              <span className="dropdown-plus" aria-hidden="true">
+                +
+              </span>
+              <span className="dropdown-item-copy">
+                <strong>New website</strong>
+              </span>
+            </button>
+          </nav>
+        ) : null}
 
-            <div className="documents-body">
-              <p className="product-description">{productDescription}</p>
+        {openMenu === "account" ? (
+          <nav className="dropdown dropdown-account" aria-label="Account menu">
+            <div className="dropdown-item is-current">
+              <span className="account-avatar" aria-hidden="true">
+                {project.config.name[0]?.toUpperCase() ?? "A"}
+              </span>
+              <span className="dropdown-item-copy">
+                <strong>{project.config.name} workspace</strong>
+                <em>{project.agentProvider.title} · local</em>
+              </span>
+            </div>
+            <div className="dropdown-divider" />
+            <button
+              className="dropdown-item"
+              type="button"
+              onClick={() => {
+                setOpenMenu(null);
+                void api.openExternalUrl(project.config.websiteUrl);
+              }}
+            >
+              <span className="dropdown-item-copy">
+                <strong>Open website</strong>
+              </span>
+            </button>
+            <button className="dropdown-item" type="button" disabled>
+              <span className="dropdown-item-copy">
+                <strong>Settings</strong>
+                <em>Coming soon</em>
+              </span>
+            </button>
+          </nav>
+        ) : null}
+      </header>
 
-              <div className="documents-section">
-                <p className="eyebrow">Documents</p>
-              </div>
-              <div className="document-list">
-                {project.docs.map((doc) => (
+      {error ? <div className="error home-error">{error}</div> : null}
+
+      <div className="home-body">
+        <aside className="home-sidebar" aria-label="Navigation">
+          <button
+            className={
+              view.kind === "inbox" ? "nav-item is-active" : "nav-item"
+            }
+            type="button"
+            onClick={() => setView({ kind: "inbox" })}
+          >
+            <span className="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" focusable="false">
+                <path d="M2 9.5 4.2 3.6h7.6L14 9.5v3H2z" />
+                <path d="M2 9.5h3.4c.3 1.2 1.3 2 2.6 2s2.3-.8 2.6-2H14" />
+              </svg>
+            </span>
+            Inbox
+          </button>
+          <button
+            className={
+              view.kind === "schedules" ? "nav-item is-active" : "nav-item"
+            }
+            type="button"
+            onClick={() => setView({ kind: "schedules" })}
+          >
+            <span className="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" focusable="false">
+                <circle cx="8" cy="8" r="6" />
+                <path d="M8 4.6V8l2.4 1.6" />
+              </svg>
+            </span>
+            Schedules
+          </button>
+
+          <p className="sidebar-heading">Channels</p>
+          {readyChannels.length ? (
+            readyChannels.map((setup) => {
+              const option = channelOption(setup.id);
+              const isActive =
+                view.kind === "channel" && view.channelId === setup.id;
+              return (
+                <button
+                  className={isActive ? "nav-item is-active" : "nav-item"}
+                  key={setup.id}
+                  type="button"
+                  onClick={() =>
+                    setView({ kind: "channel", channelId: setup.id })
+                  }
+                >
+                  <span className="nav-favicon">
+                    <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
+                  </span>
+                  {setup.name}
+                </button>
+              );
+            })
+          ) : (
+            <p className="sidebar-note">No channels ready yet.</p>
+          )}
+        </aside>
+
+        <section className="home-main">
+          {view.kind === "inbox" ? (
+            <InboxView
+              onCreateSchedule={() => setView({ kind: "schedules" })}
+            />
+          ) : view.kind === "schedules" ? (
+            <SchedulesView
+              readyChannels={readyChannels}
+              schedules={schedules}
+              isComposerOpen={isComposerOpen}
+              onToggleComposer={setIsComposerOpen}
+              onChange={setSchedules}
+            />
+          ) : view.kind === "brand" ? (
+            <BrandView project={project} onOpenDoc={setSelectedDoc} />
+          ) : (
+            <ChannelView
+              project={project}
+              channelId={view.channelId}
+              onOpenFile={(fileName) =>
+                void openChannelDoc(view.channelId, fileName)
+              }
+            />
+          )}
+        </section>
+      </div>
+
+      {selectedDoc ? (
+        <DocModal doc={selectedDoc} onClose={() => setSelectedDoc(null)} />
+      ) : null}
+    </main>
+  );
+}
+
+function InboxView({ onCreateSchedule }: { onCreateSchedule: () => void }) {
+  return (
+    <div className="home-view">
+      <div className="home-view-head">
+        <div>
+          <h2>Inbox</h2>
+          <p>Drafts from scheduled runs land here for your review.</p>
+        </div>
+      </div>
+      <div className="inbox-empty">
+        <span className="inbox-empty-icon" aria-hidden="true">
+          <svg viewBox="0 0 16 16" focusable="false">
+            <path d="M2 9.5 4.2 3.6h7.6L14 9.5v3H2z" />
+            <path d="M2 9.5h3.4c.3 1.2 1.3 2 2.6 2s2.3-.8 2.6-2H14" />
+          </svg>
+        </span>
+        <strong>Your inbox is empty</strong>
+        <p>
+          When a schedule runs, the agent researches opportunities and drops
+          draft replies here. Nothing is posted without your approval.
+        </p>
+        <button className="secondary" type="button" onClick={onCreateSchedule}>
+          Create a schedule
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SchedulesView({
+  readyChannels,
+  schedules,
+  isComposerOpen,
+  onToggleComposer,
+  onChange,
+}: {
+  readyChannels: ChannelSetup[];
+  schedules: Schedule[];
+  isComposerOpen: boolean;
+  onToggleComposer: (open: boolean) => void;
+  onChange: (schedules: Schedule[]) => void;
+}) {
+  const [draftChannelId, setDraftChannelId] = React.useState(
+    readyChannels[0]?.id ?? "x",
+  );
+  const [draftCadence, setDraftCadence] =
+    React.useState<Schedule["cadence"]>("Daily");
+  const [draftTime, setDraftTime] = React.useState("09:00");
+
+  function addSchedule() {
+    onChange([
+      ...schedules,
+      {
+        id: `schedule_${Date.now()}`,
+        channelId: draftChannelId,
+        cadence: draftCadence,
+        time: draftTime,
+        enabled: true,
+      },
+    ]);
+    onToggleComposer(false);
+  }
+
+  return (
+    <div className="home-view">
+      <div className="home-view-head">
+        <div>
+          <h2>Schedules</h2>
+          <p>Recurring draft-first runs. Each run fills your inbox.</p>
+        </div>
+        <button type="button" onClick={() => onToggleComposer(!isComposerOpen)}>
+          New schedule
+        </button>
+      </div>
+
+      {isComposerOpen ? (
+        <div className="schedule-composer">
+          <div className="schedule-composer-row">
+            <div className="composer-field">
+              <span className="composer-label">Channel</span>
+              <div className="composer-chip-row">
+                {(readyChannels.length
+                  ? readyChannels
+                  : CHANNEL_OPTIONS.map((option) => ({
+                      id: option.id,
+                      name: option.name,
+                    }))
+                ).map((channel) => (
                   <button
-                    className="document-row"
-                    key={doc.key}
+                    className={
+                      draftChannelId === channel.id
+                        ? "composer-chip is-selected"
+                        : "composer-chip"
+                    }
+                    key={channel.id}
                     type="button"
-                    onClick={() => setSelectedDoc(doc)}
+                    onClick={() => setDraftChannelId(channel.id)}
                   >
-                    <span className="document-icon" aria-hidden="true">
-                      <svg viewBox="0 0 16 16" focusable="false">
-                        <path d="M4 1.75h5.2L12.75 5.3v8.95H4z" />
-                        <path d="M9 1.9v3.6h3.55M6 8h4M6 10.5h4" />
-                      </svg>
-                    </span>
-                    <span>{doc.title}</span>
-                    <span className="document-chevron" aria-hidden="true">
-                      ›
-                    </span>
+                    {channel.name}
                   </button>
                 ))}
               </div>
-
-              <div className="competitors-section">
-                <p className="eyebrow">Competitors</p>
-                {competitors.length ? (
-                  <div className="competitor-list">
-                    {competitors.map((competitor) => (
-                      <button
-                        className="competitor-row"
-                        key={competitor.url}
-                        type="button"
-                        onClick={() => void api.openExternalUrl(competitor.url)}
-                      >
-                        <UrlIcon websiteUrl={competitor.url} />
-                        <span>{competitor.host}</span>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="empty-note">
-                    Verified competitor links will appear here after analysis.
-                  </p>
-                )}
+            </div>
+            <div className="composer-field">
+              <span className="composer-label">Cadence</span>
+              <div className="composer-chip-row">
+                {(["Daily", "Weekdays", "Weekly"] as const).map((cadence) => (
+                  <button
+                    className={
+                      draftCadence === cadence
+                        ? "composer-chip is-selected"
+                        : "composer-chip"
+                    }
+                    key={cadence}
+                    type="button"
+                    onClick={() => setDraftCadence(cadence)}
+                  >
+                    {cadence}
+                  </button>
+                ))}
               </div>
             </div>
-          </aside>
-
-          <section className="workspace-main" aria-label="GTM workspace">
-            <div className="channel-header">
-              <p className="eyebrow">Dashboard</p>
-              <h2>Daily GTM workspace</h2>
-              <p>
-                Your configured channels will turn into recurring research,
-                drafts, approvals, and browser-assisted posting runs.
-              </p>
+            <div className="composer-field">
+              <span className="composer-label">Time</span>
+              <input
+                className="composer-time"
+                type="time"
+                value={draftTime}
+                onChange={(event) => setDraftTime(event.target.value)}
+              />
             </div>
-
-            <div className="dashboard-status-list">
-              {readyChannels.length ? (
-                readyChannels.map((setup) => {
-                  const option = channelOption(setup.id);
-                  return (
-                    <article className="dashboard-status-card" key={setup.id}>
-                      <div className="dashboard-status-head">
-                        <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
-                        <strong>{setup.name}</strong>
-                        <span>Ready for draft-first runs</span>
-                      </div>
-                      <div className="channel-analysis-files">
-                        {CHANNEL_DOCS.map((doc) => (
-                          <button
-                            className="channel-file-chip"
-                            key={doc.fileName}
-                            type="button"
-                            onClick={() =>
-                              void openChannelDoc(setup.id, doc.fileName)
-                            }
-                            disabled={!setup.files.includes(doc.fileName)}
-                          >
-                            <span className="document-icon" aria-hidden="true">
-                              <svg viewBox="0 0 16 16" focusable="false">
-                                <path d="M4 1.75h5.2L12.75 5.3v8.95H4z" />
-                                <path d="M9 1.9v3.6h3.55M6 8h4M6 10.5h4" />
-                              </svg>
-                            </span>
-                            {doc.title}
-                          </button>
-                        ))}
-                      </div>
-                    </article>
-                  );
-                })
-              ) : (
-                <p className="empty-note">
-                  No channels are ready yet. Finish channel analysis first.
-                </p>
-              )}
-            </div>
-          </section>
+          </div>
+          <div className="schedule-composer-actions">
+            <p>Runs create drafts in your inbox. Nothing posts on its own.</p>
+            <button type="button" onClick={addSchedule}>
+              Add schedule
+            </button>
+          </div>
         </div>
+      ) : null}
 
-        {selectedDoc ? (
-          <DocModal doc={selectedDoc} onClose={() => setSelectedDoc(null)} />
-        ) : null}
-      </section>
-    </main>
+      {schedules.length ? (
+        <div className="schedule-list">
+          {schedules.map((schedule) => {
+            const option = channelOption(schedule.channelId);
+            return (
+              <div className="schedule-row" key={schedule.id}>
+                <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
+                <span className="schedule-copy">
+                  <strong>
+                    {option?.name ?? schedule.channelId} · draft replies
+                  </strong>
+                  <em>
+                    {schedule.cadence} at {schedule.time} · draft-first
+                  </em>
+                </span>
+                <button
+                  className={schedule.enabled ? "switch is-on" : "switch"}
+                  type="button"
+                  role="switch"
+                  aria-checked={schedule.enabled}
+                  onClick={() =>
+                    onChange(
+                      schedules.map((candidate) =>
+                        candidate.id === schedule.id
+                          ? { ...candidate, enabled: !candidate.enabled }
+                          : candidate,
+                      ),
+                    )
+                  }
+                >
+                  <span className="switch-knob" />
+                </button>
+                <button
+                  className="schedule-remove"
+                  type="button"
+                  aria-label="Remove schedule"
+                  onClick={() =>
+                    onChange(
+                      schedules.filter(
+                        (candidate) => candidate.id !== schedule.id,
+                      ),
+                    )
+                  }
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="empty-note">
+          No schedules yet. Create one to start recurring draft runs.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function BrandView({
+  project,
+  onOpenDoc,
+}: {
+  project: ProjectState;
+  onOpenDoc: (doc: ContextDoc) => void;
+}) {
+  const host = displayHost(project.config.websiteUrl);
+  const productDescription = extractProductDescription(project.docs);
+  const competitors = extractCompetitors(project.docs, host);
+
+  return (
+    <div className="home-view">
+      <div className="home-view-head">
+        <div>
+          <h2>Brand analysis</h2>
+          <p>{productDescription}</p>
+        </div>
+      </div>
+
+      <p className="eyebrow">Source documents</p>
+      <div className="document-list">
+        {project.docs.map((doc) => (
+          <button
+            className="document-row"
+            key={doc.key}
+            type="button"
+            onClick={() => onOpenDoc(doc)}
+          >
+            <DocIcon />
+            <span>{doc.title}</span>
+            <span className="document-chevron" aria-hidden="true">
+              ›
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <p className="eyebrow">Competitors</p>
+      {competitors.length ? (
+        <div className="competitor-list">
+          {competitors.map((competitor) => (
+            <button
+              className="competitor-row"
+              key={competitor.url}
+              type="button"
+              onClick={() => void api.openExternalUrl(competitor.url)}
+            >
+              <UrlIcon websiteUrl={competitor.url} />
+              <span>{competitor.host}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="empty-note">
+          Verified competitor links will appear here after analysis.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ChannelView({
+  project,
+  channelId,
+  onOpenFile,
+}: {
+  project: ProjectState;
+  channelId: string;
+  onOpenFile: (fileName: string) => void;
+}) {
+  const setup = project.channelSetups.find(
+    (candidate) => candidate.id === channelId,
+  );
+  const option = channelOption(channelId);
+  if (!setup) return null;
+
+  return (
+    <div className="home-view">
+      <div className="home-view-head">
+        <div>
+          <div className="channel-view-title">
+            <UrlIcon websiteUrl={option?.faviconUrl ?? ""} />
+            <h2>{setup.name}</h2>
+            {setup.analysisStatus === "ready" ? (
+              <span className="channel-analysis-chip is-ready">Ready</span>
+            ) : null}
+          </div>
+          <p>
+            Channel memory for draft-first outreach
+            {setup.accountLabel ? ` · ${setup.accountLabel}` : ""}.
+          </p>
+        </div>
+      </div>
+
+      <p className="eyebrow">Channel memory</p>
+      <div className="document-list">
+        {CHANNEL_DOCS.map((doc) => (
+          <button
+            className="document-row"
+            key={doc.fileName}
+            type="button"
+            onClick={() => onOpenFile(doc.fileName)}
+            disabled={!setup.files.includes(doc.fileName)}
+          >
+            <DocIcon />
+            <span>{doc.title}</span>
+            <span className="document-chevron" aria-hidden="true">
+              ›
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
