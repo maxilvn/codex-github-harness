@@ -211,6 +211,20 @@ function App() {
     }
   }
 
+  async function retryInitialAnalysis() {
+    if (!project) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.runInitialAnalysis(project.config.path);
+      setProject(await api.loadProject(project.config.path));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function retryChannelAnalysis(channelId: string) {
     if (!project) return;
     setBusy(true);
@@ -264,6 +278,8 @@ function App() {
       ) : step === "brand" && project ? (
         <BrandAnalysisStep
           project={project}
+          busy={busy}
+          onRetry={() => void retryInitialAnalysis()}
           onContinue={() => {
             setError(null);
             setStep("browser");
@@ -539,7 +555,8 @@ function AgentStep({
                 <strong>{provider.title}</strong>
                 {!provider.available ? (
                   <em>
-                    {provider.error ?? `Install \`${provider.command}\` to enable`}
+                    {provider.error ??
+                      `Install \`${provider.command}\` to enable`}
                   </em>
                 ) : provider.version ? (
                   <em>{compactVersion(provider.version)}</em>
@@ -575,9 +592,13 @@ function AgentStep({
 
 function BrandAnalysisStep({
   project,
+  busy,
+  onRetry,
   onContinue,
 }: {
   project: ProjectState;
+  busy: boolean;
+  onRetry: () => void;
   onContinue: () => void;
 }) {
   const [isLogOpen, setIsLogOpen] = React.useState(false);
@@ -588,6 +609,8 @@ function BrandAnalysisStep({
   const isComplete = isBrandAnalysisComplete(project);
   const runError =
     run?.kind === "initial_analysis" ? (run?.error ?? null) : null;
+  const isStalled =
+    !isComplete && run?.kind === "initial_analysis" && run.status !== "running";
   const competitors = extractCompetitors(
     project.docs,
     displayHost(project.config.websiteUrl),
@@ -632,6 +655,12 @@ function BrandAnalysisStep({
       </div>
 
       {runError ? <p className="run-error">{runError}</p> : null}
+      {isStalled && !runError ? (
+        <p className="run-error">
+          The analysis ended before the source documents were written. Retry to
+          start a new run.
+        </p>
+      ) : null}
 
       <div className="onboard-actions">
         <button
@@ -641,9 +670,15 @@ function BrandAnalysisStep({
         >
           {isLogOpen ? "Hide agent log" : "Show agent log"}
         </button>
-        <button type="button" onClick={onContinue} disabled={!isComplete}>
-          Continue
-        </button>
+        {isStalled ? (
+          <button type="button" onClick={onRetry} disabled={busy}>
+            {busy ? "Starting..." : "Retry analysis"}
+          </button>
+        ) : (
+          <button type="button" onClick={onContinue} disabled={!isComplete}>
+            Continue
+          </button>
+        )}
       </div>
 
       {isLogOpen ? (
