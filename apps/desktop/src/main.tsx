@@ -17,6 +17,8 @@ const logoBlack = new URL(
   import.meta.url,
 ).href;
 
+const codexIcon = new URL("./assets/agents/codex.png", import.meta.url).href;
+
 const ONBOARDING_STEPS = [
   "url",
   "agent",
@@ -68,7 +70,7 @@ const CHANNEL_DOCS = [
 ];
 
 const AGENT_PROVIDER_ICONS: Record<string, string> = {
-  codex: "https://www.google.com/s2/favicons?domain=openai.com&sz=64",
+  codex: codexIcon,
   claude: "https://www.google.com/s2/favicons?domain=claude.ai&sz=64",
   cursor: "https://www.google.com/s2/favicons?domain=cursor.com&sz=64",
   devin: "https://www.google.com/s2/favicons?domain=devin.ai&sz=64",
@@ -536,7 +538,9 @@ function AgentStep({
               <span className="agent-provider-main">
                 <strong>{provider.title}</strong>
                 {!provider.available ? (
-                  <em>Install `{provider.command}` to enable</em>
+                  <em>
+                    {provider.error ?? `Install \`${provider.command}\` to enable`}
+                  </em>
                 ) : provider.version ? (
                   <em>{compactVersion(provider.version)}</em>
                 ) : null}

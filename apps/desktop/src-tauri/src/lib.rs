@@ -410,7 +410,8 @@ fn select_agent_provider(provider_id: String) -> AppResult<AgentProviderStatus> 
     if !candidate_status.available {
         return Err(AppError::Invalid(format!(
             "{} is not installed on this machine. Install `{}` first.",
-            candidate.title, candidate.command
+            candidate.title,
+            provider_probe_command(candidate)
         )));
     }
 
@@ -1557,32 +1558,58 @@ fn selected_provider_status() -> AppResult<AgentProviderStatus> {
     Ok(provider_status(&selected_provider()?))
 }
 
+fn provider_probe_command(provider: &AgentProvider) -> String {
+    match provider.id.as_str() {
+        "codex" => "codex".into(),
+        "claude" => "claude".into(),
+        _ => provider.command.clone(),
+    }
+}
+
 fn provider_status(provider: &AgentProvider) -> AgentProviderStatus {
-    match resolve_command(&provider.command) {
-        Some(path) => AgentProviderStatus {
-            id: provider.id.clone(),
-            title: provider.title.clone(),
-            command: provider.command.clone(),
-            args: provider.args.clone(),
-            enabled: provider.enabled,
-            selected: provider.selected,
-            available: true,
-            path: Some(path.to_string_lossy().to_string()),
-            version: command_version(&path),
-            error: None,
-        },
-        None => AgentProviderStatus {
-            id: provider.id.clone(),
-            title: provider.title.clone(),
-            command: provider.command.clone(),
-            args: provider.args.clone(),
-            enabled: provider.enabled,
-            selected: provider.selected,
-            available: false,
-            path: None,
-            version: None,
-            error: Some(format!("{} command not found", provider.command)),
-        },
+    let probe = provider_probe_command(provider);
+    let probe_path = resolve_command(&probe);
+    let launcher_path = if probe == provider.command {
+        probe_path.clone()
+    } else {
+        resolve_command(&provider.command)
+    };
+
+    let (available, path, version, error) = match (&probe_path, &launcher_path) {
+        (Some(probe_path), Some(_)) => (
+            true,
+            Some(probe_path.to_string_lossy().to_string()),
+            command_version(probe_path),
+            None,
+        ),
+        (None, _) => (
+            false,
+            None,
+            None,
+            Some(format!("Install `{probe}` to enable")),
+        ),
+        (Some(_), None) => (
+            false,
+            None,
+            None,
+            Some(format!(
+                "`{}` is required to launch this agent",
+                provider.command
+            )),
+        ),
+    };
+
+    AgentProviderStatus {
+        id: provider.id.clone(),
+        title: provider.title.clone(),
+        command: provider.command.clone(),
+        args: provider.args.clone(),
+        enabled: provider.enabled,
+        selected: provider.selected,
+        available,
+        path,
+        version,
+        error,
     }
 }
 
@@ -1676,6 +1703,24 @@ fn command_search_paths() -> Vec<PathBuf> {
     let mut paths = env::var_os("PATH")
         .map(|value| env::split_paths(&value).collect::<Vec<_>>())
         .unwrap_or_default();
+    let mut push_unique = |path: PathBuf| {
+        if !paths.iter().any(|existing| existing == &path) {
+            paths.push(path);
+        }
+    };
+    if let Some(home) = dirs::home_dir() {
+        for relative in [
+            ".local/bin",
+            "bin",
+            ".cargo/bin",
+            ".bun/bin",
+            ".deno/bin",
+            ".volta/bin",
+            "Library/pnpm",
+        ] {
+            push_unique(home.join(relative));
+        }
+    }
     for path in [
         "/opt/homebrew/bin",
         "/opt/homebrew/sbin",
@@ -1686,10 +1731,7 @@ fn command_search_paths() -> Vec<PathBuf> {
         "/usr/sbin",
         "/sbin",
     ] {
-        let path = PathBuf::from(path);
-        if !paths.iter().any(|existing| existing == &path) {
-            paths.push(path);
-        }
+        push_unique(PathBuf::from(path));
     }
     paths
 }
@@ -2705,6 +2747,19 @@ mod tests {
             .iter()
             .any(|path| path == Path::new("/opt/homebrew/bin")));
         assert!(paths.iter().any(|path| path == Path::new("/usr/local/bin")));
+        let local_bin = dirs::home_dir().unwrap().join(".local/bin");
+        assert!(paths.iter().any(|path| path == &local_bin));
+    }
+
+    #[test]
+    fn probes_real_agent_binaries_for_npx_launched_providers() {
+        let providers = default_agent_providers();
+        let codex = providers.iter().find(|p| p.id == "codex").unwrap();
+        let claude = providers.iter().find(|p| p.id == "claude").unwrap();
+        let cursor = providers.iter().find(|p| p.id == "cursor").unwrap();
+        assert_eq!(provider_probe_command(codex), "codex");
+        assert_eq!(provider_probe_command(claude), "claude");
+        assert_eq!(provider_probe_command(cursor), "cursor-agent");
     }
 
     #[test]
